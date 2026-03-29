@@ -23,12 +23,8 @@ export default async function HomePage() {
           {/* Logo/Icon */}
           <div className="flex justify-center mb-6">
             <div className="relative group cursor-default">
-              <div className="absolute inset-0 bg-gradient-to-r from-amber-500 to-amber-300 rounded-2xl blur-xl opacity-20 group-hover:opacity-40 transition-opacity duration-700" />
-              <div className="relative w-24 h-24 rounded-2xl bg-[#111116] border border-white/10 flex items-center justify-center backdrop-blur-2xl shadow-2xl">
-                <svg className="w-12 h-12 text-amber-400 drop-shadow-[0_0_15px_rgba(251,191,36,0.5)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-                </svg>
-              </div>
+              <div className="absolute inset-0 bg-gradient-to-r from-amber-500 to-amber-300 rounded-[2.5rem] blur-xl opacity-20 group-hover:opacity-40 transition-opacity duration-700" />
+              <img src="/logo.png" alt="Community Hero Logo" className="relative h-40 w-auto object-contain drop-shadow-[0_0_15px_rgba(251,191,36,0.3)] hover:-translate-y-1 transition-transform duration-500" />
             </div>
           </div>
 
@@ -36,19 +32,19 @@ export default async function HomePage() {
           <div className="space-y-6">
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-xs font-medium text-white/60 mb-2 shadow-xl shadow-black/50">
               <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.8)]" />
-              Automation Engine Online
+              Community Hero Tool
             </div>
             
             <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight text-white leading-[1.1]">
-              The Premium
+              Diamonds and
               <br />
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-amber-400 to-amber-500 drop-shadow-sm">
-                Esports Joiner
+                PRL Joiner
               </span>
             </h1>
             
             <p className="text-lg md:text-xl text-white/50 max-w-2xl mx-auto leading-relaxed font-light">
-              Seamlessly consolidate Diamond Rewards and Pre-Registered Lists from hundreds of Community Handlers. Built for scale, designed for speed.
+              Automatically extract and combine Diamond Rewards and PRL entries from multiple CH Handlers into a single, compiled spreadsheet. Save hours of manual copy-pasting.
             </p>
           </div>
 
@@ -88,9 +84,9 @@ export default async function HomePage() {
                 </div>
               </button>
             </form>
-            <p className="text-[11px] text-white/30 uppercase tracking-widest font-mono">
-              Secure Auth Required
-            </p>
+              <p className="text-[11px] text-white/30 uppercase tracking-widest font-mono mt-4">
+                Secure Login Required
+              </p>
           </div>
         </div>
       </div>

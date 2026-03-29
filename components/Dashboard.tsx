@@ -275,7 +275,7 @@ export default function Dashboard() {
   if (loading) return (
     <div className="flex flex-col justify-center items-center min-h-[60vh] gap-4 bg-[#09090b]">
       <div className="w-10 h-10 border-2 border-amber-500 border-t-transparent rounded-full animate-spin shadow-[0_0_15px_rgba(245,158,11,0.5)]" />
-      <div className="text-sm font-medium text-amber-500/40 animate-pulse uppercase tracking-widest font-mono">Initializing System...</div>
+      <div className="text-sm font-medium text-amber-500/40 animate-pulse uppercase tracking-widest font-mono">Loading Dashboard...</div>
     </div>
   );
 
@@ -300,14 +300,14 @@ export default function Dashboard() {
                 </span>
                 Dashboard
               </h1>
-              <p className="text-white/40 mt-2 text-sm font-light">Consolidate and monitor your synchronization operations.</p>
+              <p className="text-white/40 mt-2 text-sm font-light">Manage your Diamond Rewards and PRL synchronization tasks.</p>
             </div>
             <div className="flex gap-4 items-center">
               <Link href="/jobs/new" className="relative group overflow-hidden rounded-xl p-[1px]">
                 <span className="absolute inset-0 bg-gradient-to-r from-amber-400 via-amber-200 to-amber-500 opacity-60 group-hover:opacity-100 transition-opacity duration-300 rounded-xl" />
                 <div className="relative flex items-center gap-2 px-5 py-2.5 bg-[#0A0A0A] rounded-xl group-hover:bg-[#111] transition-colors">
                   <svg className="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-                  <span className="text-white font-medium text-sm">New Engine</span>
+                  <span className="text-white font-medium text-sm">New Sync Job</span>
                 </div>
               </Link>
               <button onClick={() => signOut({ callbackUrl: "/" })} className="text-xs text-white/30 hover:text-white/80 uppercase tracking-widest font-mono transition-colors">Sign Out</button>
@@ -334,12 +334,12 @@ export default function Dashboard() {
             </div>
             <div className="bg-[#111116]/80 backdrop-blur-xl rounded-2xl p-6 border border-white/5 shadow-2xl relative overflow-hidden group">
               <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-2xl group-hover:bg-emerald-500/10 transition-colors" />
-              <div className="text-white/30 text-[10px] font-bold uppercase tracking-widest mb-3">Successful Resolves</div>
+              <div className="text-white/30 text-[10px] font-bold uppercase tracking-widest mb-3">Successful Syncs</div>
               <div className="text-4xl font-black text-emerald-400/90">{successfulJobs}</div>
             </div>
             <div className="bg-[#111116]/80 backdrop-blur-xl rounded-2xl p-6 border border-white/5 shadow-2xl relative overflow-hidden group">
               <div className="absolute top-0 right-0 w-32 h-32 bg-red-500/5 rounded-full blur-2xl group-hover:bg-red-500/10 transition-colors" />
-              <div className="text-white/30 text-[10px] font-bold uppercase tracking-widest mb-3">Failed Fetch</div>
+              <div className="text-white/30 text-[10px] font-bold uppercase tracking-widest mb-3">Failed Runs</div>
               <div className={`text-4xl font-black ${totalErrors > 0 ? "text-red-400/90 drop-shadow-[0_0_8px_rgba(248,113,113,0.5)]" : "text-white/10"}`}>{totalErrors}</div>
               {totalErrors > 0 && <div className="text-[10px] text-red-400/50 mt-2 uppercase tracking-wide">Sheets Inaccessible</div>}
             </div>
@@ -348,11 +348,11 @@ export default function Dashboard() {
           {/* Jobs List */}
           <div className="bg-[#111116]/50 backdrop-blur-2xl rounded-3xl overflow-hidden min-h-[400px] border border-white/5 animate-slide-up stagger-2 shadow-2xl">
             <div className="p-6 md:p-8 border-b border-white/[0.04] flex flex-col sm:flex-row justify-between items-center gap-4 bg-gradient-to-b from-white/[0.02] to-transparent">
-              <h2 className="text-xl font-bold text-white tracking-tight">Active Deployments</h2>
+              <h2 className="text-xl font-bold text-white tracking-tight">Active Sync Jobs</h2>
               <div className="relative w-full sm:w-80">
                 <input
                   type="text"
-                  placeholder="Query operations..."
+                  placeholder="Search jobs..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full bg-[#0A0A0A] border border-white/10 rounded-xl py-3 pl-11 pr-4 text-sm text-white focus:outline-none focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/50 transition-all font-mono placeholder:text-white/20"
@@ -368,8 +368,8 @@ export default function Dashboard() {
                   <div className="w-20 h-20 mx-auto rounded-3xl bg-white/[0.02] border border-white/[0.05] flex items-center justify-center shadow-inner">
                     <svg className="w-8 h-8 text-white/10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>
                   </div>
-                  <p className="tracking-wide">System awaiting configuration. No engines deployed.</p>
-                  <Link href="/jobs/new" className="inline-block text-amber-500/80 hover:text-amber-400 font-medium text-sm transition-colors uppercase tracking-widest">Initialize First Array</Link>
+                  <p className="tracking-wide">No sync jobs available. Create one to get started.</p>
+                  <Link href="/jobs/new" className="inline-block text-amber-500/80 hover:text-amber-400 font-medium text-sm transition-colors uppercase tracking-widest">Create New Job</Link>
                 </div>
               ) : (
                 filteredJobs.map(job => {
@@ -384,16 +384,16 @@ export default function Dashboard() {
                       <div className="flex justify-between items-start gap-4 mb-6">
                         <div className="flex-1">
                           <div className="font-bold text-white text-lg tracking-tight mb-1 truncate">{job.name}</div>
-                          <div className="text-[10px] text-white/20 font-mono tracking-widest uppercase">SYS_NODE: {job.id.split("-")[0]}</div>
+                          <div className="text-[10px] text-white/20 font-mono tracking-widest uppercase">JOB_ID: {job.id.split("-")[0]}</div>
                         </div>
                         <div className="flex gap-2">
-                          <button onClick={() => handleRunClick(job)} className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 transition-all border border-emerald-500/10 hover:border-emerald-500/30 shadow-[0_0_10px_rgba(16,185,129,0.1)]" title="Execute">
+                          <button onClick={() => handleRunClick(job)} className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 transition-all border border-emerald-500/10 hover:border-emerald-500/30 shadow-[0_0_10px_rgba(16,185,129,0.1)]" title="Run Job">
                             <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
                           </button>
-                          <Link href={`/jobs/${job.id}/edit`} className="p-2.5 rounded-xl bg-white/[0.04] text-white/60 hover:text-amber-400 hover:bg-amber-500/10 transition-all border border-white/[0.05] hover:border-amber-500/20" title="Configure">
+                          <Link href={`/jobs/${job.id}/edit`} className="p-2.5 rounded-xl bg-white/[0.04] text-white/60 hover:text-amber-400 hover:bg-amber-500/10 transition-all border border-white/[0.05] hover:border-amber-500/20" title="Edit">
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                           </Link>
-                          <button onClick={() => handleDeleteClick(job)} className="p-2.5 rounded-xl bg-white/[0.04] text-white/30 hover:text-red-400 hover:bg-red-500/10 transition-all border border-white/[0.05] hover:border-red-500/20" title="Terminate">
+                          <button onClick={() => handleDeleteClick(job)} className="p-2.5 rounded-xl bg-white/[0.04] text-white/30 hover:text-red-400 hover:bg-red-500/10 transition-all border border-white/[0.05] hover:border-red-500/20" title="Delete">
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                           </button>
                         </div>
@@ -421,12 +421,12 @@ export default function Dashboard() {
 
                       <div className="flex justify-between items-end">
                         <div className="text-[10px] text-white/30 tracking-wider">
-                          <span className="block mb-1 opacity-50">LAST UPLINK</span>
+                          <span className="block mb-1 opacity-50">LAST RUN</span>
                           {formatTimeAgo(job.lastRunAt)}
                         </div>
                         {job.targetSpreadsheetId && (
                           <a href={`https://docs.google.com/spreadsheets/d/${job.targetSpreadsheetId}`} target="_blank" rel="noopener noreferrer" className="group/link text-[11px] font-medium text-amber-500 flex items-center gap-1.5 bg-amber-500/5 hover:bg-amber-500/10 px-3 py-1.5 rounded-lg transition-colors border border-amber-500/10 uppercase tracking-wide">
-                            Access Matrix
+                            View Sheet
                             <svg className="w-3 h-3 group-hover/link:translate-x-0.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
                           </a>
                         )}
@@ -455,33 +455,33 @@ export default function Dashboard() {
         <Modal
           isOpen={runModalOpen}
           onClose={() => setRunModalOpen(false)}
-          title="Execute Deployment"
+          title="Run Sync Job"
           footer={
             <div className="flex gap-3 justify-end w-full">
-              <button onClick={() => setRunModalOpen(false)} className="px-5 py-2.5 rounded-xl font-semibold text-white/50 hover:text-white hover:bg-white/5 transition-colors">Abort</button>
-              <button onClick={confirmRunJob} className="px-5 py-2.5 rounded-xl font-bold bg-amber-500 text-amber-950 hover:bg-amber-400 transition-colors shadow-[0_0_15px_rgba(245,158,11,0.3)]">Launch Sequence</button>
+              <button onClick={() => setRunModalOpen(false)} className="px-5 py-2.5 rounded-xl font-semibold text-white/50 hover:text-white hover:bg-white/5 transition-colors">Cancel</button>
+              <button onClick={confirmRunJob} className="px-5 py-2.5 rounded-xl font-bold bg-amber-500 text-amber-950 hover:bg-amber-400 transition-colors shadow-[0_0_15px_rgba(245,158,11,0.3)]">Run Now</button>
             </div>
           }
         >
           <p className="text-white/50 text-sm leading-relaxed">
-            Begin synchronization protocol for <strong className="text-amber-400">{selectedJob?.name}</strong>? This process will interface with the reporting nodes and ingest {selectedJob?.type === "diamonds" ? "diamond reward" : "PRL"} telemetry.
+            Begin synchronization protocol for <strong className="text-amber-400">{selectedJob?.name}</strong>? This process will read from the CH reporting sheets and automatically generate your final {selectedJob?.type === "diamonds" ? "Diamond Rewards" : "PRL"} sheet.
           </p>
         </Modal>
 
         <Modal
           isOpen={deleteModalOpen}
           onClose={() => setDeleteModalOpen(false)}
-          title="Terminate Engine"
+          title="Delete Job"
           type="danger"
           footer={
             <div className="flex gap-3 justify-end w-full">
               <button onClick={() => setDeleteModalOpen(false)} className="px-5 py-2.5 rounded-xl font-semibold text-white/50 hover:text-white hover:bg-white/5 transition-colors">Cancel</button>
-              <button onClick={confirmDeleteJob} className="px-5 py-2.5 rounded-xl font-bold bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30 transition-colors">Confirm Deletion</button>
+              <button onClick={confirmDeleteJob} className="px-5 py-2.5 rounded-xl font-bold bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30 transition-colors">Delete Job</button>
             </div>
           }
         >
           <p className="text-white/50 text-sm">
-            Terminate operation <strong className="text-white">{selectedJob?.name}</strong>? Matrix data will be unrecoverable.
+            Are you sure you want to permanently delete <strong className="text-white">{selectedJob?.name}</strong>? This action cannot be undone.
           </p>
         </Modal>
 
