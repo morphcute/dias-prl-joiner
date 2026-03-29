@@ -61,19 +61,25 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
     reportingTabName = reportingSpreadsheet.data.sheets?.[0]?.properties?.title || "Sheet1";
   }
 
-  // Read CH entries using batchGet: Column D = CH Nickname, Column M = Diamond Winners Sheet link
+  // Determine target columns based on Game Mode (Special = 1v1, 2v2, 3v3)
+  const gameModeStr = (job as any).gameMode || "";
+  const isSpecial = ["1v1", "2v2", "3v3"].includes(gameModeStr);
+  const isOnsite = gameModeStr === "Onsite 5v5";
+  const diamondCol = isOnsite ? "S" : isSpecial ? "O" : "M";
+
+  // Read CH entries using batchGet: Column D = CH Nickname, Column M/O = Diamond Winners Sheet link
   const batchResult = await sheets.spreadsheets.values.batchGet({
     spreadsheetId: (job as any).spreadsheetId,
     ranges: [
       `'${reportingTabName}'!D4:D`,   // CH Nicknames
-      `'${reportingTabName}'!M4:M`,   // Diamond Winners Sheet links
+      `'${reportingTabName}'!${diamondCol}4:${diamondCol}`,   // Diamond Winners Sheet links
     ],
   });
 
   const nicknameRows = batchResult.data.valueRanges?.[0]?.values || [];
   const linkRows = batchResult.data.valueRanges?.[1]?.values || [];
 
-  console.log(`[Diamonds] Tab: "${reportingTabName}", CH Nicknames: ${nicknameRows.length} rows, Diamond links (col M): ${linkRows.length} rows`);
+  console.log(`[Diamonds] Tab: "${reportingTabName}", Mode: ${isSpecial ? "Special" : "5v5"}, Diamond links (col ${diamondCol}): ${linkRows.length} rows`);
 
   const chEntries: { chName: string; url: string }[] = [];
   const maxLen = Math.max(nicknameRows.length, linkRows.length);

@@ -181,30 +181,28 @@ export function JobForm({ editJobId }: JobFormProps) {
               </div>
             </div>
 
-            {type === "prl" && (
-              <div className="space-y-3 animate-fade-in pl-1">
-                <label className="text-sm font-medium text-white/80">PRL Game Mode</label>
-                <div className="grid grid-cols-4 gap-3">
-                  {["5v5", "3v3", "2v2", "1v1"].map((mode) => (
-                    <label key={mode} className={`relative flex items-center justify-center p-3 rounded-xl border cursor-pointer transition-all duration-200 ${
-                      gameMode === mode
-                        ? "bg-violet-500/10 border-violet-500/30 text-violet-400 shadow-lg shadow-violet-500/5"
-                        : "bg-white/[0.03] border-white/[0.08] text-white/40 hover:bg-white/[0.06]"
-                    }`}>
-                      <input type="radio" value={mode} checked={gameMode === mode} onChange={() => setGameMode(mode)} className="sr-only" />
-                      <span className="text-sm font-bold tracking-wide">{mode}</span>
-                    </label>
-                  ))}
-                </div>
-                <div className="flex items-start gap-2 pt-1">
-                  <svg className="w-3.5 h-3.5 text-white/30 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                  <p className="text-[11px] text-white/30 leading-tight">
-                    Required for validation. A minimum of 10 teams is required per CH output.<br/>
-                    <span className="text-white/40 font-medium">5v5 = 50 rows min. 1v1 = 10 rows min.</span>
-                  </p>
-                </div>
+            <div className="space-y-3 animate-fade-in pl-1">
+              <label className="text-sm font-medium text-white/80">Tournament Format</label>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                {["5v5", "3v3", "2v2", "1v1", "Onsite 5v5"].map((mode) => (
+                  <label key={mode} className={`relative flex items-center justify-center p-3 rounded-xl border cursor-pointer transition-all duration-200 ${
+                    gameMode === mode
+                      ? "bg-violet-500/10 border-violet-500/30 text-violet-400 shadow-lg shadow-violet-500/5"
+                      : "bg-white/[0.03] border-white/[0.08] text-white/40 hover:bg-white/[0.06]"
+                  }`}>
+                    <input type="radio" value={mode} checked={gameMode === mode} onChange={() => setGameMode(mode)} className="sr-only" />
+                    <span className="text-sm font-bold tracking-wide text-center whitespace-nowrap">{mode}</span>
+                  </label>
+                ))}
               </div>
-            )}
+              <div className="flex items-start gap-2 pt-1">
+                <svg className="w-3.5 h-3.5 text-white/30 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                <p className="text-[11px] text-white/30 leading-tight">
+                  Sets extraction columns and constraints.<br/>
+                  <span className="text-white/40 font-medium">Standard = 50 min. Onsite = 25 min.</span>
+                </p>
+              </div>
+            </div>
           </div>
 
           <div className="h-px bg-white/[0.06]" />
@@ -228,7 +226,11 @@ export function JobForm({ editJobId }: JobFormProps) {
                 <svg className="w-4 h-4 text-blue-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                 <div className="text-[11px] text-blue-300/60 leading-relaxed">
                   <strong className="text-blue-300/80">Paste the full URL</strong> including the <code className="text-blue-300/70 bg-blue-500/10 px-1 rounded">?gid=...</code> tab ID.
-                  <br />The app will read <strong>Column D</strong> (CH Nickname) and <strong>Column {type === "diamonds" ? "M" : "H"}</strong> ({type === "diamonds" ? "Diamond Winners Sheet" : "PRL"} links) starting from <strong>row 4</strong>.
+                  <br />The app will read <strong>Column D</strong> (CH Nickname) and <strong>Column {
+                    type === "diamonds" 
+                      ? (gameMode === "Onsite 5v5" ? "S" : ["1v1", "2v2", "3v3"].includes(gameMode) ? "O" : "M") 
+                      : (gameMode === "Onsite 5v5" ? "N" : ["1v1", "2v2", "3v3"].includes(gameMode) ? "J" : "K")
+                  }</strong> ({type === "diamonds" ? "Diamond Winners Sheet" : "PRL"} links) starting from <strong>row 4</strong>.
                   <br />CHs marked as DISSOLVED or without a link are automatically skipped.
                 </div>
               </div>

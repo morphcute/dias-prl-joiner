@@ -125,13 +125,20 @@ export async function syncPrl(job: JoinerJob, runId: string) {
     reportingTabName = reportingSpreadsheet.data.sheets?.[0]?.properties?.title || "Sheet1";
   }
 
-  // Column H for PRL links
+  // Determine target column based on Game Mode (Special = 1v1, 2v2, 3v3)
+  const gameModeStr = (job as any).gameMode || "";
+  const isSpecial = ["1v1", "2v2", "3v3"].includes(gameModeStr);
+  const isOnsite = gameModeStr === "Onsite 5v5";
+  const prlCol = isOnsite ? "N" : isSpecial ? "J" : "K";
+
+  console.log(`[PRL] Tab: "${reportingTabName}", Mode: ${gameModeStr || "5v5"}, Target Col: ${prlCol}`);
+
   const { entries: chEntries } = await readChEntriesFromReportingSheet(
-    sheets, (job as any).spreadsheetId, reportingTabName, "H"
+    sheets, (job as any).spreadsheetId, reportingTabName, prlCol
   );
 
   if (chEntries.length === 0) {
-    errors.push({ chName: "Reporting Sheet", error: "No CH entries with PRL links found in column H" });
+    errors.push({ chName: "Reporting Sheet", error: `No CH entries with PRL links found in column ${prlCol}` });
     await prisma.joinerRun.update({
       where: { id: runId },
       data: { errors: JSON.stringify(errors) },
@@ -274,10 +281,12 @@ export async function syncPrl(job: JoinerJob, runId: string) {
         validRowCount++;
       }
 
-      // Check min teams (10 teams min required)
+      // Check min teams (10 teams min required, 5 for Onsite)
       const gameModeStr = (job as any).gameMode || "5v5";
+      const isOnsite = gameModeStr === "Onsite 5v5";
       const gameModeMult = parseInt(gameModeStr.charAt(0)) || 5;
-      const minPlayers = 10 * gameModeMult;
+      
+      const minPlayers = isOnsite ? 25 : 10 * gameModeMult;
       const requiredThreshold = Math.max(1, minPlayers - 4); // Allow up to 4 players to have failed/missing entries
       
       if (validRowCount < requiredThreshold) {
