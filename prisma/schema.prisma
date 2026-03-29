@@ -1,0 +1,112 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  accounts      Account[]
+  sessions      Session[]
+  jobs          JoinerJob[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+}
+
+model Session {
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+}
+
+model JoinerJob {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  name String
+  type String @default("diamonds") // "diamonds" or "prl"
+
+  // Reporting sheet - source of CH entries
+  spreadsheetId     String   // Reporting sheet ID (e.g., "1HUANmtnLjlGi...")
+  reportingSheetGid String?  // Tab GID (e.g., "601212302" for MARCH 7, 2026)
+
+  // Target configuration
+  targetSpreadsheetId   String?
+  targetSpreadsheetName String?
+  sheetName             String @default("Consolidated")
+
+  // Options
+  validationEnabled Boolean @default(false)
+  gameMode          String? @default("5v5") // 1v1, 2v2, 3v3, 5v5
+
+  // Owner
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  isEnabled   Boolean   @default(true)
+  lastRunAt   DateTime?
+
+  // Runs
+  runs JoinerRun[]
+
+  @@index([userId])
+}
+
+model JoinerRun {
+  id          String   @id @default(cuid())
+  jobId       String
+  job         JoinerJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  startedAt   DateTime @default(now())
+  completedAt DateTime?
+  status      String   // "running", "success", "failed"
+  progress    Int      @default(0)
+  progressMessage String?
+  rowsWritten Int      @default(0)
+  // Errors as JSON: [{ chName: string, error: string }]
+  errors      Json     @default("[]")
+
+  @@index([jobId, status])
+  @@index([jobId, startedAt])
+}
