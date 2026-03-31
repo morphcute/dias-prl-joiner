@@ -106,6 +106,8 @@ model JoinerRun {
   rowsWritten Int      @default(0)
   // Errors as JSON: [{ chName: string, error: string }]
   errors      Json     @default("[]")
+  // Stats as JSON: [{ chName: string, count: number }]
+  chStats     Json     @default("[]")
 
   @@index([jobId, status])
   @@index([jobId, startedAt])

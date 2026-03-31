@@ -95,6 +95,7 @@ export async function syncPrl(job: JoinerJob, runId: string) {
   const sheets = google.sheets({ version: "v4", auth: authClient });
 
   const errors: ChError[] = [];
+  const chStats: { chName: string; count: number }[] = [];
   const allRows: string[][] = [];
   const duplicateRowIndices: number[] = [];
   const seenUids = new Map<string, { chName: string; rowIdx: number }>();
@@ -367,7 +368,9 @@ export async function syncPrl(job: JoinerJob, runId: string) {
         validRowCount++;
       }
 
-      // Check min teams (10 teams min required, 5 for Onsite)
+      chStats.push({ chName, count: validRowCount });
+
+      // Determine Validation Thresholds based on mode
       const gameModeStr = (job as any).gameMode || "5v5";
       const isOnsite = gameModeStr === "Onsite 5v5";
       const gameModeMult = parseInt(gameModeStr.charAt(0)) || 5;
@@ -637,7 +640,11 @@ export async function syncPrl(job: JoinerJob, runId: string) {
 
   await prisma.joinerRun.update({
     where: { id: runId },
-    data: { errors: JSON.stringify(errors) },
+    data: { 
+       errors: JSON.stringify(errors),
+       // @ts-ignore
+       chStats: JSON.stringify(chStats),
+    },
   });
 
   return { rowsWritten: allRows.length, success: true, errors };

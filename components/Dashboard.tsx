@@ -58,6 +58,8 @@ export default function Dashboard() {
   const [errorsModalOpen, setErrorsModalOpen] = useState(false);
   const [selectedJob, setSelectedJob] = useState<JoinerJob | null>(null);
   const [viewErrors, setViewErrors] = useState<ChError[]>([]);
+  const [viewStats, setViewStats] = useState<{ chName: string; count: number }[]>([]);
+  const [statsModalOpen, setStatsModalOpen] = useState(false);
 
   const getDisplayStatus = (job: JoinerJob): string | undefined => {
     const live = runProgress.get(job.id);
@@ -182,7 +184,14 @@ export default function Dashboard() {
     setErrorsModalOpen(true);
   };
 
-
+  const handleViewStats = (job: JoinerJob) => {
+    const run = job.runs?.[0];
+    if (!run) return;
+    const statsStr = (run as any).chStats;
+    const stats = typeof statsStr === "string" ? JSON.parse(statsStr) : statsStr || [];
+    setViewStats(stats);
+    setStatsModalOpen(true);
+  };
 
   const getErrorCount = (job: JoinerJob): number => {
     const run = job.runs?.[0];
@@ -377,6 +386,9 @@ export default function Dashboard() {
                   const isRunning = displayStatus === "running";
                   const { progress, progressMessage } = getProgressData(job);
                   const errCount = getErrorCount(job);
+                  
+                  const chStatsStr = (job.runs?.[0] as any)?.chStats;
+                  const chStats = typeof chStatsStr === "string" ? JSON.parse(chStatsStr) : chStatsStr || [];
 
                   return (
                     <div key={job.id} className="bg-[#111116] border border-white/5 rounded-2xl p-6 relative overflow-hidden group hover:border-amber-500/20 transition-all duration-300 shadow-xl">
@@ -408,6 +420,14 @@ export default function Dashboard() {
                           <span className="px-2.5 py-1 rounded-md text-[10px] uppercase tracking-widest font-bold bg-white/5 text-white/50 border border-white/10">
                             ✓ MooGold
                           </span>
+                        )}
+                        {chStats && chStats.length > 0 && (
+                          <button
+                            onClick={() => handleViewStats(job)}
+                            className="px-2.5 py-1 rounded-md text-[10px] uppercase tracking-widest font-bold bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20 transition-colors"
+                          >
+                            ✓ {chStats.length} CH COMPILED
+                          </button>
                         )}
                         {errCount > 0 && (
                           <button
@@ -547,6 +567,39 @@ export default function Dashboard() {
           <p className="text-[10px] text-white/20 mt-4 uppercase tracking-widest font-mono">
             Check Node Access Clearance. "Anyone with link" required.
           </p>
+        </Modal>
+
+        <Modal
+          isOpen={statsModalOpen}
+          onClose={() => setStatsModalOpen(false)}
+          title="Compilation Report"
+          footer={
+            <div className="flex justify-end w-full">
+              <button 
+                onClick={() => setStatsModalOpen(false)} 
+                className="px-5 py-2.5 rounded-xl font-semibold bg-white/5 text-white/80 hover:bg-white/10 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          }
+        >
+          <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+            {viewStats.length === 0 ? (
+              <p className="text-white/40 text-sm">No statistics available.</p>
+            ) : (
+              <div className="space-y-2">
+                {viewStats.map((stat, i) => (
+                  <div key={i} className="bg-white/5 border border-white/10 p-4 rounded-xl flex justify-between items-center group hover:bg-white/10 transition-colors">
+                    <span className="font-bold text-white tracking-wide">{stat.chName}</span>
+                    <span className="text-xs px-2.5 py-1 rounded-md bg-white/5 border border-white/10 font-mono text-white/60 tracking-widest uppercase">
+                      {stat.count} {stat.count === 1 ? 'Team/Player' : 'Teams/Players'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </Modal>
       </div>
     </>

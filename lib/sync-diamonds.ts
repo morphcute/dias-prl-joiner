@@ -34,6 +34,7 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
   const sheets = google.sheets({ version: "v4", auth: authClient });
 
   const errors: ChError[] = [];
+  const chStats: { chName: string; count: number }[] = [];
   const allRows: string[][] = [];
   const duplicateRowIndices: number[] = [];
   const seenUids = new Map<string, { chName: string; rowIdx: number }>();
@@ -243,6 +244,8 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
         allRows.push(rowData);
         chHeaderAdded = true;
       }
+      
+      chStats.push({ chName, count: playerCount });
 
       if (playerCount === 0) {
         errors.push({ chName, error: `Empty Tournament: No actual players found in the sheet. (Did the CH forget to input players?)` });
@@ -521,7 +524,11 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
 
   await prisma.joinerRun.update({
     where: { id: runId },
-    data: { errors: JSON.stringify(errors) },
+    data: { 
+      errors: JSON.stringify(errors),
+      // @ts-ignore
+      chStats: JSON.stringify(chStats),
+    },
   });
 
   return { rowsWritten: allRows.length, success: true, errors };
