@@ -229,7 +229,7 @@ export function JobForm({ editJobId }: JobFormProps) {
                   <br />The app will read <strong>Column D</strong> (CH Nickname) and <strong>Column {
                     type === "diamonds" 
                       ? (gameMode === "Onsite 5v5" ? "S" : ["1v1", "2v2", "3v3"].includes(gameMode) ? "O" : "M") 
-                      : (gameMode === "Onsite 5v5" ? "N" : ["1v1", "2v2", "3v3"].includes(gameMode) ? "J" : "K")
+                      : (gameMode === "Onsite 5v5" ? "N" : ["1v1", "2v2", "3v3"].includes(gameMode) ? "J" : "H")
                   }</strong> ({type === "diamonds" ? "Diamond Winners Sheet" : "PRL"} links) starting from <strong>row 4</strong>.
                   <br />CHs marked as DISSOLVED or without a link are automatically skipped.
                 </div>

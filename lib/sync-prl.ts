@@ -129,7 +129,7 @@ export async function syncPrl(job: JoinerJob, runId: string) {
   const gameModeStr = (job as any).gameMode || "";
   const isSpecial = ["1v1", "2v2", "3v3"].includes(gameModeStr);
   const isOnsite = gameModeStr === "Onsite 5v5";
-  const prlCol = isOnsite ? "N" : isSpecial ? "J" : "K";
+  const prlCol = isOnsite ? "N" : isSpecial ? "J" : "H";
 
   console.log(`[PRL] Tab: "${reportingTabName}", Mode: ${gameModeStr || "5v5"}, Target Col: ${prlCol}`);
 
