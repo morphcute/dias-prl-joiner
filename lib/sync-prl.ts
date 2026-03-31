@@ -97,7 +97,7 @@ export async function syncPrl(job: JoinerJob, runId: string) {
   const errors: ChError[] = [];
   const allRows: string[][] = [];
   const duplicateRowIndices: number[] = [];
-  const seenUids = new Map<string, string>();
+  const seenUids = new Map<string, { chName: string; rowIdx: number }>();
 
   // Header: CH, Players Name, Players IGN, Server, UID (NO "No." column)
   const HEADER = ["CH", "Players Name", "Players IGN", "Server", "UID"];
@@ -180,16 +180,40 @@ export async function syncPrl(job: JoinerJob, runId: string) {
     }
 
     try {
-      // Just read columns B:E natively. Sheets API defaults to first tab if no sheet name is provided.
-      // B = Name, C = IGN, D = Server, E = UID
+      // Read a broader range to dynamically detect headers
       const data = await sheets.spreadsheets.values.get({
         spreadsheetId,
-        range: "B:E",
+        range: "A1:Z",
       });
 
       const rows = data.data.values;
       if (!rows || rows.length === 0) {
-        errors.push({ chName, error: "Sheet is blank or missing B:E data" });
+        errors.push({ chName, error: "Sheet is blank or missing data" });
+        continue;
+      }
+
+      // Find header row by looking for NAME/SERVER/UID columns
+      let headerRowIdx = -1;
+      let nameCol = -1, ignCol = -1, serverCol = -1, uidCol = -1;
+
+      for (let r = 0; r < Math.min(rows.length, 30); r++) {
+        const row = rows[r];
+        for (let c = 0; c < row.length; c++) {
+          const val = String(row[c] ?? "").trim().toUpperCase();
+          if (val === "NAME" || val === "PLAYERS NAME" || val === "PLAYER NAME" || val === "PLAYER'S NAME") nameCol = c;
+          if (val === "IGN" || val === "PLAYERS IGN" || val === "PLAYER IGN" || val === "PLAYER'S IGN" || val === "IN GAME NAME") ignCol = c;
+          if (val === "SERVER" || val === "# SERVER" || val === "SERVER ID" || val === "SERVERID") serverCol = c;
+          if (val === "UID" || val === "USER ID" || val === "ID" || val === "# UID" || val === "USERID") uidCol = c;
+        }
+        if (nameCol !== -1 && serverCol !== -1 && uidCol !== -1) {
+          headerRowIdx = r;
+          break;
+        }
+        nameCol = -1; ignCol = -1; serverCol = -1; uidCol = -1;
+      }
+
+      if (headerRowIdx === -1 || nameCol === -1) {
+        errors.push({ chName, error: "Could not find header row with NAME/SERVER/UID columns" });
         continue;
       }
 
@@ -197,12 +221,12 @@ export async function syncPrl(job: JoinerJob, runId: string) {
       let chHeaderAdded = false;
 
       // Extract data rows
-      for (let r = 0; r < rows.length; r++) {
+      for (let r = headerRowIdx + 1; r < rows.length; r++) {
         const row = rows[r];
-        let name = String(row[0] ?? "").trim();
-        let ign = String(row[1] ?? "").trim();
-        let server = String(row[2] ?? "").trim();
-        let uid = String(row[3] ?? "").trim();
+        let name = String(row[nameCol] ?? "").trim();
+        let ign = ignCol !== -1 ? String(row[ignCol] ?? "").trim() : "";
+        let server = String(row[serverCol] ?? "").trim();
+        let uid = String(row[uidCol] ?? "").trim();
 
         if (!name && !uid) continue;
 
@@ -211,8 +235,7 @@ export async function syncPrl(job: JoinerJob, runId: string) {
         if (upperName === "TOTAL" || upperName === "TOTALS") continue;
         if (upperName.includes("PLAYER") || upperName === "NAME" || upperName === "IGN") continue;
 
-        // Handle shifted columns (if IGN was completely omitted from the sheet)
-        // i.e., C = Server (ign variable), D = UID (server variable), E is empty
+        // Handle shifted columns for individual players who misaligned their inputs (C=IGN vs C=Server)
 
         // Pre-parse mixed IDs e.g. "243906066 (3533)" into separate nums
         const parseMixedId = (str: string) => {
@@ -315,10 +338,16 @@ export async function syncPrl(job: JoinerJob, runId: string) {
           const uniquePlayerIdentifier = `${server}-${uid}`;
           if (seenUids.has(uniquePlayerIdentifier)) {
             isDuplicate = true;
-            const prevCh = seenUids.get(uniquePlayerIdentifier);
-            errors.push({ chName, error: `Duplicate player entry found: ${name} (Server: ${server}, UID: ${uid}) was already registered in CH ${prevCh}` });
+            const prevCh = seenUids.get(uniquePlayerIdentifier)!;
+            errors.push({ chName, error: `Duplicate player entry found: ${name} (Server: ${server}, UID: ${uid}) was already registered in CH ${prevCh.chName}` });
+            
+            // Push the first occurrence index to the list so BOTH get highlighted!
+            if (!duplicateRowIndices.includes(prevCh.rowIdx)) {
+               duplicateRowIndices.push(prevCh.rowIdx);
+            }
           } else {
-            seenUids.set(uniquePlayerIdentifier, chName);
+            // Track the row index that this player will occupy in the final sheet
+            seenUids.set(uniquePlayerIdentifier, { chName, rowIdx: 1 + allRows.length });
           }
         }
 

@@ -36,7 +36,7 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
   const errors: ChError[] = [];
   const allRows: string[][] = [];
   const duplicateRowIndices: number[] = [];
-  const seenUids = new Map<string, string>();
+  const seenUids = new Map<string, { chName: string; rowIdx: number }>();
 
   // Header: CH, NAME, SERVER, UID, CODE, AMOUNT, REMARKS
   const HEADER = ["CH", "NAME", "SERVER", "UID", "CODE", "AMOUNT", "REMARKS"];
@@ -193,6 +193,7 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
       }
 
       let chHeaderAdded = false;
+      let playerCount = 0;
 
       // Extract data rows
       for (let r = headerRowIdx + 1; r < rows.length; r++) {
@@ -207,15 +208,23 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
         if (!name && !uid) continue;
         if (name.toUpperCase() === "TOTAL" || name.toUpperCase() === "TOTALS") continue;
 
+        if (!remarks.toUpperCase().includes("CH HANDLER")) {
+           playerCount++;
+        }
+
         let isDuplicate = false;
         if (uid && server) {
           const uniquePlayerIdentifier = `${server}-${uid}`;
           if (seenUids.has(uniquePlayerIdentifier)) {
             isDuplicate = true;
-            const prevCh = seenUids.get(uniquePlayerIdentifier);
-            errors.push({ chName, error: `Duplicate winner found: ${name} (Server: ${server}, UID: ${uid}) was already registered in CH ${prevCh}` });
+            const prev = seenUids.get(uniquePlayerIdentifier)!;
+            errors.push({ chName, error: `Duplicate winner found: ${name} (Server: ${server}, UID: ${uid}) was already registered in CH ${prev.chName}` });
+            
+            if (!duplicateRowIndices.includes(prev.rowIdx)) {
+               duplicateRowIndices.push(prev.rowIdx);
+            }
           } else {
-            seenUids.set(uniquePlayerIdentifier, chName);
+            seenUids.set(uniquePlayerIdentifier, { chName, rowIdx: 1 + allRows.length });
           }
         }
 
@@ -233,6 +242,10 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
 
         allRows.push(rowData);
         chHeaderAdded = true;
+      }
+
+      if (playerCount === 0) {
+        errors.push({ chName, error: `Empty Tournament: No actual players found in the sheet. (Did the CH forget to input players?)` });
       }
     } catch (error: any) {
       const msg = error?.message || String(error);
@@ -453,6 +466,22 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
         },
       });
     }
+  }
+
+  // Highlight duplicate rows in pink/reddish color
+  for (const dupIdx of duplicateRowIndices) {
+    requests.push({
+      repeatCell: {
+        range: { sheetId: targetSheetId, startRowIndex: dupIdx, endRowIndex: dupIdx + 1, startColumnIndex: 0, endColumnIndex: colCount },
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: { red: 1, green: 0.85, blue: 0.85 },
+            textFormat: { foregroundColor: { red: 0.6, green: 0.1, blue: 0.1 }, bold: true }
+          }
+        },
+        fields: "userEnteredFormat(backgroundColor,textFormat(foregroundColor,bold))",
+      },
+    });
   }
 
   requests.push({
