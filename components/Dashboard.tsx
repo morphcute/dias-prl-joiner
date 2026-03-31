@@ -502,14 +502,10 @@ export default function Dashboard() {
             ) : (
               (() => {
                 const playerFaults = viewErrors.filter(err => 
-                  err.error.toLowerCase().includes("duplicate") || 
-                  err.error.toLowerCase().includes("negative") || 
-                  err.error.toLowerCase().includes("interchanged")
+                  err.error.toLowerCase().includes("duplicate")
                 );
                 const systemFaults = viewErrors.filter(err => 
-                  !err.error.toLowerCase().includes("duplicate") && 
-                  !err.error.toLowerCase().includes("negative") && 
-                  !err.error.toLowerCase().includes("interchanged")
+                  !err.error.toLowerCase().includes("duplicate")
                 );
 
                 return (

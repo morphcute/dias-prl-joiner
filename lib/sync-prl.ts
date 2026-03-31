@@ -213,31 +213,82 @@ export async function syncPrl(job: JoinerJob, runId: string) {
 
         // Handle shifted columns (if IGN was completely omitted from the sheet)
         // i.e., C = Server (ign variable), D = UID (server variable), E is empty
+
+        // Pre-parse mixed IDs e.g. "243906066 (3533)" into separate nums
+        const parseMixedId = (str: string) => {
+          const nums = str.match(/\d+/g);
+          if (nums && nums.length >= 2) {
+            const n1 = nums[0];
+            const n2 = nums[1];
+            if (n1.length > 5 && n2.length <= 6) return { u: n1, s: n2 };
+            if (n2.length > 5 && n1.length <= 6) return { u: n2, s: n1 };
+          }
+          return null;
+        };
+
+        const mUid = parseMixedId(uid);
+        const mServer = parseMixedId(server);
+        const mIgn = parseMixedId(ign);
+
+        if (mUid) {
+          uid = mUid.u;
+          server = mUid.s;
+          errors.push({ chName, error: `Mixed Server/UID extracted for player ${name} (Server: ${server}, UID: ${uid})` });
+        } else if (mServer) {
+          // Col D has mixed. In 4-col this is UID column.
+          uid = mServer.u;
+          if (ign.length <= 6 && /^\d+$/.test(ign)) {
+            server = ign;
+            ign = "";
+          } else {
+            server = mServer.s;
+          }
+          errors.push({ chName, error: `Mixed Server/UID extracted for player ${name} (Server: ${server}, UID: ${uid})` });
+        } else if (mIgn) {
+          // Col C has mixed. In 4-col this is SERVER column. Interchanged + Mixed!
+          uid = mIgn.u;
+          server = mIgn.s;
+          ign = "";
+          errors.push({ chName, error: `Interchanged and Mixed Server/UID for player ${name} (Server: ${server}, UID: ${uid})` });
+        }
+
         const ignIsNum = /^-?\d+$/.test(ign);
         const serverIsNum = /^-?\d+$/.test(server);
 
         if (!uid && ignIsNum && serverIsNum) {
-            const ignNumLen = ign.replace("-", "").length;
-            const srvNumLen = server.replace("-", "").length;
+          const ignNumLen = ign.replace("-", "").length;
+          const srvNumLen = server.replace("-", "").length;
 
-            if (ignNumLen <= 6 && srvNumLen > 5) {
-                // Valid shifted: C=Server, D=UID
-                uid = server;
-                server = ign;
-                ign = "";
-            } else if (ignNumLen > 5 && srvNumLen <= 6) {
-                // Interchanged shifted: C=UID, D=Server
-                uid = ign;
-                // server stays in D
-                ign = "";
-                errors.push({ chName, error: `Interchanged Server/UID for player ${name} (Server: ${server}, UID: ${uid})` });
+          if (ignNumLen <= 6 && srvNumLen > 5) {
+            // Valid shifted: C=Server, D=UID
+            uid = server;
+            server = ign;
+            ign = "";
+          } else if (ignNumLen > 5 && srvNumLen <= 6) {
+            // Interchanged shifted: C=UID, D=Server
+            uid = ign;
+            // server stays in D
+            ign = "";
+            errors.push({ chName, error: `Interchanged Server/UID for player ${name} (Server: ${server}, UID: ${uid})` });
+          } else {
+            // Catch-all: BOTH are short (user entered server twice) or both are long. Still shifted!
+            uid = server;
+            server = ign;
+            ign = "";
+            if (ignNumLen <= 6 && srvNumLen <= 6) {
+              errors.push({ chName, error: `Server entered in UID column for player ${name} (Server: ${server}, UID: ${uid})` });
             }
+          }
         }
 
-        // Validation: Negative values
+        // Check for negative values (System Fault)
         if (server.includes("-") || uid.includes("-")) {
-          errors.push({ chName, error: `Found negative UID or Server for player ${name} (Server: ${server}, UID: ${uid})` });
+          errors.push({ chName, error: `Negative sign detected for player ${name} (Raw Server: ${server}, Raw UID: ${uid})` });
         }
+
+        // Clean up any remaining non-digits (like minus signs, spaces, or letters)
+        server = server.replace(/\D/g, "");
+        uid = uid.replace(/\D/g, "");
 
         // Validation: Missing Server or UID
         if (!server || !uid) {
@@ -245,8 +296,8 @@ export async function syncPrl(job: JoinerJob, runId: string) {
           errors.push({ chName, error: `Missing Server or UID for player ${playerName} (Server: '${server || "BLANK"}', UID: '${uid || "BLANK"}')` });
         }
 
-        const sLen = server.replace("-", "").length;
-        const uLen = uid.replace("-", "").length;
+        const sLen = server.length;
+        const uLen = uid.length;
 
         // Validation: Swapped server/UID in 4-column setup
         if (sLen > 5 && uLen > 0 && uLen < 6) {
@@ -291,10 +342,10 @@ export async function syncPrl(job: JoinerJob, runId: string) {
       const gameModeStr = (job as any).gameMode || "5v5";
       const isOnsite = gameModeStr === "Onsite 5v5";
       const gameModeMult = parseInt(gameModeStr.charAt(0)) || 5;
-      
+
       const minPlayers = isOnsite ? 25 : 10 * gameModeMult;
       const requiredThreshold = Math.max(1, minPlayers - 4); // Allow up to 4 players to have failed/missing entries
-      
+
       if (validRowCount < requiredThreshold) {
         errors.push({ chName, error: `Dissolved Tournament: only ${validRowCount} valid players found (Mode: ${gameModeStr}, Target: ${minPlayers}, Minimum allowed: ${requiredThreshold})` });
       }
@@ -453,11 +504,11 @@ export async function syncPrl(job: JoinerJob, runId: string) {
       requests.push({
         repeatCell: {
           range: { sheetId: targetSheetId, startRowIndex: r - 1, endRowIndex: r, startColumnIndex: 0, endColumnIndex: 1 },
-          cell: { 
-            userEnteredFormat: { 
+          cell: {
+            userEnteredFormat: {
               backgroundColor: { red: 0.9, green: 0.9, blue: 0.98 },
               textFormat: { bold: true, foregroundColor: { red: 0.1, green: 0.1, blue: 0.4 } }
-            } 
+            }
           },
           fields: "userEnteredFormat(backgroundColor,textFormat(bold,foregroundColor))",
         },
