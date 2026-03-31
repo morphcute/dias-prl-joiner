@@ -239,6 +239,12 @@ export async function syncPrl(job: JoinerJob, runId: string) {
           errors.push({ chName, error: `Found negative UID or Server for player ${name} (Server: ${server}, UID: ${uid})` });
         }
 
+        // Validation: Missing Server or UID
+        if (!server || !uid) {
+          const playerName = name || ign || "Unknown";
+          errors.push({ chName, error: `Missing Server or UID for player ${playerName} (Server: '${server || "BLANK"}', UID: '${uid || "BLANK"}')` });
+        }
+
         const sLen = server.replace("-", "").length;
         const uLen = uid.replace("-", "").length;
 

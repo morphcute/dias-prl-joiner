@@ -55,17 +55,18 @@ export async function POST(request: Request) {
   if (!targetSpreadsheetId && targetName) {
     try {
       const authClient = await getUserAuth(session.user.id);
-      const drive = google.drive({ version: "v3", auth: authClient });
+      const sheets = google.sheets({ version: "v4", auth: authClient });
 
-      const file = await drive.files.create({
+      const spreadsheet = await sheets.spreadsheets.create({
         requestBody: {
-          name: targetName,
-          mimeType: "application/vnd.google-apps.spreadsheet",
+          properties: {
+            title: targetName,
+          },
         },
-        fields: "id",
+        fields: "spreadsheetId",
       });
 
-      targetSpreadsheetId = file.data.id;
+      targetSpreadsheetId = spreadsheet.data.spreadsheetId;
     } catch (error: any) {
       return NextResponse.json(
         { error: `Failed to create target spreadsheet: ${error.message}` },
