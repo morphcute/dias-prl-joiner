@@ -147,17 +147,27 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
     }
 
     try {
-      const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
-      const sheetTitle = spreadsheet.data.sheets?.[0]?.properties?.title;
-      if (!sheetTitle) {
-        errors.push({ chName, error: "Sheet has no tabs" });
-        continue;
+      let sheetData: any = null;
+      let retries = 0;
+      while (retries < 3) {
+        try {
+          // Range "A1:Z" defaults to the first sheet, avoiding a redundant API call that doubles quota hits
+          sheetData = await sheets.spreadsheets.values.get({
+            spreadsheetId,
+            range: "A1:Z",
+          });
+          break; // success
+        } catch (e: any) {
+          if (e.message && e.message.includes("Quota exceeded") && retries < 2) {
+            retries++;
+            const waitTime = retries * 8000; // wait 8s, then 16s
+            console.log(`[Diamond] Quota exceeded on ${chName}. Retrying in ${waitTime}ms... (Attempt ${retries}/2)`);
+            await new Promise((res) => setTimeout(res, waitTime));
+          } else {
+            throw e; // Break while loop and trigger outer try/catch
+          }
+        }
       }
-
-      const sheetData = await sheets.spreadsheets.values.get({
-        spreadsheetId,
-        range: `'${sheetTitle}'!A1:Z`,
-      });
 
       const rows = sheetData.data.values;
       if (!rows || rows.length === 0) {
@@ -178,16 +188,17 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
           
           if ((val.includes("NAME") || val.includes("PLAYER")) && !val.includes("IGN") && !val.includes("GAME")) {
              nameCol = c;
-          }
-          if (val === "SERVER" || val.includes("SERVER")) {
+          } else if (val === "SERVER" || val.includes("SERVER")) {
              serverCol = c;
-          }
-          if (val === "UID" || val.includes("UID") || val.includes("USER ID") || val === "ID") {
+          } else if (val === "UID" || val.includes("UID") || val.includes("USER ID") || val === "ID") {
              uidCol = c;
+          } else if (val === "CODE" || val.includes("CODE")) {
+             codeCol = c;
+          } else if (val === "AMOUNT" || val.includes("DIAMONDS") || val === "DIAS") {
+             amountCol = c;
+          } else if (val === "REMARKS" || val === "REMARK" || val.includes("REMARK")) {
+             remarksCol = c;
           }
-          if (val === "CODE" || val.includes("CODE")) codeCol = c;
-          if (val === "AMOUNT" || val.includes("DIAMONDS") || val === "DIAS") amountCol = c;
-          if (val === "REMARKS" || val === "REMARK" || val.includes("REMARK")) remarksCol = c;
         }
         if (nameCol !== -1 && serverCol !== -1 && uidCol !== -1) {
           headerRowIdx = r;
