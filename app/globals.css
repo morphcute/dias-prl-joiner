@@ -3,19 +3,19 @@
 @tailwind utilities;
 
 :root {
-  --bg-primary: #0a0a0f;
-  --bg-secondary: #111118;
-  --bg-card: rgba(255, 255, 255, 0.03);
-  --border-subtle: rgba(255, 255, 255, 0.06);
-  --border-medium: rgba(255, 255, 255, 0.1);
-  --text-primary: #ffffff;
-  --text-secondary: rgba(255, 255, 255, 0.6);
-  --text-muted: rgba(255, 255, 255, 0.3);
-  --accent-blue: #3b82f6;
+  --bg-primary: #0f172a;
+  --bg-secondary: #1e293b;
+  --bg-card: #1e293b;
+  --border-subtle: #334155;
+  --border-medium: #475569;
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --accent-blue: #6366f1;
   --accent-emerald: #10b981;
   --accent-violet: #8b5cf6;
   --accent-amber: #f59e0b;
-  --accent-rose: #f43f5e;
+  --accent-rose: #ef4444;
 }
 
 body {
@@ -62,24 +62,24 @@ body {
 
 /* Buttons */
 .btn-primary {
-  @apply px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-xl text-sm transition-all duration-200 flex items-center gap-2 shadow-lg shadow-blue-600/20 hover:shadow-blue-500/30;
+  @apply px-5 py-2.5 bg-indigo-500 hover:bg-indigo-400 text-slate-50 font-bold rounded-xl text-sm transition-all duration-200 flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/20 active:scale-95;
 }
 
 .btn-ghost {
-  @apply px-4 py-2.5 bg-white/[0.04] hover:bg-white/[0.08] text-white/60 hover:text-white/80 font-medium rounded-xl text-sm transition-all duration-200 flex items-center gap-2 border border-white/[0.06] hover:border-white/[0.1];
+  @apply px-5 py-2.5 bg-transparent hover:bg-slate-800 text-slate-400 hover:text-slate-50 font-semibold rounded-xl text-sm transition-all duration-200 flex items-center gap-2 border border-slate-700 hover:border-slate-600;
 }
 
 .btn-danger {
-  @apply px-4 py-2.5 bg-red-600 hover:bg-red-500 text-white font-medium rounded-xl text-sm transition-all duration-200 flex items-center gap-2 shadow-lg shadow-red-600/20;
+  @apply px-5 py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-bold rounded-xl text-sm transition-all duration-200 flex items-center gap-2 border border-red-500/20 active:scale-95;
 }
 
 /* Inputs */
 .input-field {
-  @apply w-full px-4 py-3 bg-white/[0.04] border border-white/[0.08] rounded-xl text-sm text-white placeholder-white/20 focus:outline-none focus:border-blue-500/40 focus:ring-1 focus:ring-blue-500/20 transition-all;
+  @apply w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-slate-50 placeholder-slate-500 focus:outline-none focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20 transition-all shadow-inner;
 }
 
 .textarea-field {
-  @apply w-full px-4 py-3 bg-white/[0.04] border border-white/[0.08] rounded-xl text-sm text-white placeholder-white/20 focus:outline-none focus:border-blue-500/40 focus:ring-1 focus:ring-blue-500/20 transition-all font-mono resize-none;
+  @apply w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-slate-50 placeholder-slate-500 focus:outline-none focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20 transition-all font-mono resize-none shadow-inner;
 }
 
 /* Badges */

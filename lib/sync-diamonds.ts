@@ -174,12 +174,20 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
         const row = rows[r];
         for (let c = 0; c < row.length; c++) {
           const val = String(row[c] ?? "").trim().toUpperCase();
-          if (val === "NAME" || val === "PLAYERS NAME" || val === "PLAYER NAME" || val === "PLAYER'S NAME") nameCol = c;
-          if (val === "SERVER") serverCol = c;
-          if (val === "UID" || val === "USER ID" || val === "ID") uidCol = c;
-          if (val === "CODE") codeCol = c;
-          if (val === "AMOUNT" || val === "DIAMONDS" || val === "DIAS") amountCol = c;
-          if (val === "REMARKS" || val === "REMARK") remarksCol = c;
+          if (val === "") continue;
+          
+          if ((val.includes("NAME") || val.includes("PLAYER")) && !val.includes("IGN") && !val.includes("GAME")) {
+             nameCol = c;
+          }
+          if (val === "SERVER" || val.includes("SERVER")) {
+             serverCol = c;
+          }
+          if (val === "UID" || val.includes("UID") || val.includes("USER ID") || val === "ID") {
+             uidCol = c;
+          }
+          if (val === "CODE" || val.includes("CODE")) codeCol = c;
+          if (val === "AMOUNT" || val.includes("DIAMONDS") || val === "DIAS") amountCol = c;
+          if (val === "REMARKS" || val === "REMARK" || val.includes("REMARK")) remarksCol = c;
         }
         if (nameCol !== -1 && serverCol !== -1 && uidCol !== -1) {
           headerRowIdx = r;

@@ -254,13 +254,13 @@ export default function Dashboard() {
   const getStatusBadge = (status: string | undefined) => {
     switch (status) {
       case "running":
-        return <span className="badge-running"><span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />Running</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-500 border border-amber-500/20"><span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />Running</span>;
       case "success":
-        return <span className="badge-success"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />Success</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />Success</span>;
       case "failed":
-        return <span className="badge-failed"><span className="w-1.5 h-1.5 rounded-full bg-red-400" />Failed</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-bold bg-red-500/10 text-red-500 border border-red-500/20"><span className="w-1.5 h-1.5 rounded-full bg-red-500" />Failed</span>;
       default:
-        return <span className="badge-pending"><span className="w-1.5 h-1.5 rounded-full bg-white/30" />Pending</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-bold bg-slate-500/10 text-slate-400 border border-slate-500/20"><span className="w-1.5 h-1.5 rounded-full bg-slate-400" />Pending</span>;
     }
   };
 
@@ -282,44 +282,41 @@ export default function Dashboard() {
   const totalErrors = jobs.reduce((acc, j) => acc + getErrorCount(j), 0);
 
   if (loading) return (
-    <div className="flex flex-col justify-center items-center min-h-[60vh] gap-4 bg-[#09090b]">
-      <div className="w-10 h-10 border-2 border-amber-500 border-t-transparent rounded-full animate-spin shadow-[0_0_15px_rgba(245,158,11,0.5)]" />
-      <div className="text-sm font-medium text-amber-500/40 animate-pulse uppercase tracking-widest font-mono">Loading Dashboard...</div>
+    <div className="flex flex-col justify-center items-center min-h-[60vh] gap-4 bg-slate-900">
+      <div className="w-10 h-10 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin shadow-[0_0_15px_rgba(99,102,241,0.5)]" />
+      <div className="text-sm font-bold text-indigo-400/80 animate-pulse uppercase tracking-widest">Loading Dashboard...</div>
     </div>
   );
 
   return (
     <>
       <ToastProvider />
-      <div className="min-h-screen bg-[#09090b] relative overflow-hidden">
+      <div className="min-h-screen bg-slate-900 relative overflow-hidden font-sans">
         {/* Dynamic Background */}
         <div className="fixed inset-0 -z-10 bg-[url('/grid.svg')] bg-[length:50px_50px] opacity-[0.02]" />
         <div className="fixed inset-0 -z-10">
-          <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-amber-600/5 rounded-full blur-[150px]" />
-          <div className="absolute bottom-0 left-0 w-[600px] h-[600px] bg-amber-900/10 rounded-full blur-[150px]" />
+          <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-indigo-600/5 rounded-full blur-[150px]" />
+          <div className="absolute bottom-0 left-0 w-[600px] h-[600px] bg-emerald-900/5 rounded-full blur-[150px]" />
         </div>
 
         <div className="space-y-8 max-w-[1400px] mx-auto px-4 md:px-8 py-8 md:py-12 z-10 relative">
           {/* Top Bar */}
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 animate-fade-in pb-6 border-b border-white/5">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 animate-fade-in pb-6 border-b border-slate-800">
             <div>
-              <h1 className="text-4xl font-extrabold tracking-tight text-white flex items-center gap-3">
-                <span className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
-                  <span className="w-3 h-3 rounded-sm bg-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.8)]" />
+              <h1 className="text-4xl font-extrabold tracking-tight text-slate-50 flex items-center gap-3">
+                <span className="w-10 h-10 rounded-xl bg-indigo-500/10 flex items-center justify-center border border-indigo-500/20">
+                  <svg className="w-5 h-5 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                 </span>
-                Dashboard
+                Overview
               </h1>
-              <p className="text-white/40 mt-2 text-sm font-light">Manage your Diamond Rewards and PRL synchronization tasks.</p>
+              <p className="text-slate-400 mt-2 text-sm font-medium">Manage your Diamond Rewards and PRL synchronization tasks.</p>
             </div>
             <div className="flex gap-4 items-center">
-              <Link href="/jobs/new" className="relative group overflow-hidden rounded-xl p-[1px]">
-                <span className="absolute inset-0 bg-gradient-to-r from-amber-400 via-amber-200 to-amber-500 opacity-60 group-hover:opacity-100 transition-opacity duration-300 rounded-xl" />
-                <div className="relative flex items-center gap-2 px-5 py-2.5 bg-[#0A0A0A] rounded-xl group-hover:bg-[#111] transition-colors">
-                  <svg className="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-                  <span className="text-white font-medium text-sm">New Sync Job</span>
-                </div>
+              <Link href="/jobs/new" className="btn-primary">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                New Sync Job
               </Link>
-              <button onClick={() => signOut({ callbackUrl: "/" })} className="text-xs text-white/30 hover:text-white/80 uppercase tracking-widest font-mono transition-colors">Sign Out</button>
+              <button onClick={() => signOut({ callbackUrl: "/" })} className="text-xs text-white/30 hover:text-slate-50 uppercase tracking-widest font-mono transition-colors">Sign Out</button>
             </div>
           </div>
 
@@ -356,29 +353,29 @@ export default function Dashboard() {
 
           {/* Jobs List */}
           <div className="bg-[#111116]/50 backdrop-blur-2xl rounded-3xl overflow-hidden min-h-[400px] border border-white/5 animate-slide-up stagger-2 shadow-2xl">
-            <div className="p-6 md:p-8 border-b border-white/[0.04] flex flex-col sm:flex-row justify-between items-center gap-4 bg-gradient-to-b from-white/[0.02] to-transparent">
-              <h2 className="text-xl font-bold text-white tracking-tight">Active Sync Jobs</h2>
+            <div className="p-6 md:p-8 border-b border-slate-700/50 flex flex-col sm:flex-row justify-between items-center gap-4 bg-slate-800/30">
+              <h2 className="text-xl font-bold text-slate-50 tracking-tight">Active Sync Jobs</h2>
               <div className="relative w-full sm:w-80">
                 <input
                   type="text"
                   placeholder="Search jobs..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full bg-[#0A0A0A] border border-white/10 rounded-xl py-3 pl-11 pr-4 text-sm text-white focus:outline-none focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/50 transition-all font-mono placeholder:text-white/20"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl py-3 pl-11 pr-4 text-sm text-slate-50 focus:outline-none focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20 transition-all shadow-inner placeholder:text-slate-500"
                 />
-                <svg className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                <svg className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
               </div>
             </div>
 
             {/* Cards view */}
-            <div className="p-6 md:p-8 grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="p-6 md:p-8 grid grid-cols-1 lg:grid-cols-2 lg:gap-8 gap-6">
               {jobs.length === 0 ? (
-                <div className="col-span-1 lg:col-span-2 text-center text-white/30 py-20 space-y-5">
-                  <div className="w-20 h-20 mx-auto rounded-3xl bg-white/[0.02] border border-white/[0.05] flex items-center justify-center shadow-inner">
-                    <svg className="w-8 h-8 text-white/10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>
+                <div className="col-span-1 lg:col-span-2 text-center text-slate-400 py-20 space-y-5">
+                  <div className="w-20 h-20 mx-auto rounded-3xl bg-slate-800 border border-slate-700 flex items-center justify-center shadow-inner">
+                    <svg className="w-8 h-8 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>
                   </div>
                   <p className="tracking-wide">No sync jobs available. Create one to get started.</p>
-                  <Link href="/jobs/new" className="inline-block text-amber-500/80 hover:text-amber-400 font-medium text-sm transition-colors uppercase tracking-widest">Create New Job</Link>
+                  <Link href="/jobs/new" className="inline-block text-indigo-400 hover:text-indigo-300 font-bold text-sm transition-colors uppercase tracking-widest">Create New Job</Link>
                 </div>
               ) : (
                 filteredJobs.map(job => {
@@ -390,79 +387,122 @@ export default function Dashboard() {
                   const chStatsStr = (job.runs?.[0] as any)?.chStats;
                   const chStats = typeof chStatsStr === "string" ? JSON.parse(chStatsStr) : chStatsStr || [];
 
+                  const topBorderClass = isRunning ? "border-amber-500" : displayStatus === "success" ? "border-emerald-500" : displayStatus === "failed" ? "border-red-500" : "border-slate-600";
+                  
+                  const getAccentHue = () => {
+                    if (isRunning) return "from-amber-500/20 to-amber-600/5";
+                    if (displayStatus === "failed") return "from-red-500/20 to-red-600/5";
+                    if (displayStatus === "success") return "from-emerald-500/20 to-emerald-600/5";
+                    if (job.type === "diamonds") return "from-amber-500/10 to-transparent";
+                    return "from-indigo-500/10 to-transparent";
+                  };
+
+                  const getBorderAccent = () => {
+                    if (isRunning) return "group-hover:border-amber-500/50";
+                    if (displayStatus === "failed") return "group-hover:border-red-500/50";
+                    if (displayStatus === "success") return "group-hover:border-emerald-500/50";
+                    if (job.type === "diamonds") return "group-hover:border-amber-500/30";
+                    return "group-hover:border-indigo-500/30";
+                  };
+
+                  const accentHue = getAccentHue();
+                  const borderAccent = getBorderAccent();
+                  
                   return (
-                    <div key={job.id} className="bg-[#111116] border border-white/5 rounded-2xl p-6 relative overflow-hidden group hover:border-amber-500/20 transition-all duration-300 shadow-xl">
-                      {isRunning && <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-amber-600 to-amber-400 animate-pulse" />}
-                      <div className="flex justify-between items-start gap-4 mb-6">
-                        <div className="flex-1">
-                          <div className="font-bold text-white text-lg tracking-tight mb-1 truncate">{job.name}</div>
-                          <div className="text-[10px] text-white/20 font-mono tracking-widest uppercase">JOB_ID: {job.id.split("-")[0]}</div>
-                        </div>
-                        <div className="flex gap-2">
-                          <button onClick={() => handleRunClick(job)} className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 transition-all border border-emerald-500/10 hover:border-emerald-500/30 shadow-[0_0_10px_rgba(16,185,129,0.1)]" title="Run Job">
-                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
-                          </button>
-                          <Link href={`/jobs/${job.id}/edit`} className="p-2.5 rounded-xl bg-white/[0.04] text-white/60 hover:text-amber-400 hover:bg-amber-500/10 transition-all border border-white/[0.05] hover:border-amber-500/20" title="Edit">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                          </Link>
-                          <button onClick={() => handleDeleteClick(job)} className="p-2.5 rounded-xl bg-white/[0.04] text-white/30 hover:text-red-400 hover:bg-red-500/10 transition-all border border-white/[0.05] hover:border-red-500/20" title="Delete">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                          </button>
-                        </div>
-                      </div>
+                    <div key={job.id} className={`group relative flex flex-col justify-between overflow-hidden rounded-3xl bg-[#131825] border border-slate-700/60 ${borderAccent} transition-all duration-500 shadow-2xl hover:shadow-[0_20px_40px_-15px_rgba(0,0,0,0.5)] hover:-translate-y-1`}>
+                      {/* Interactive Gradient Background */}
+                      <div className={`absolute inset-0 bg-gradient-to-br ${accentHue} opacity-50 group-hover:opacity-100 transition-opacity duration-500`} />
+                      {isRunning && <div className="absolute top-0 left-0 w-full h-[3px] bg-gradient-to-r from-amber-600 via-amber-400 to-amber-600 animate-pulse drop-shadow-[0_0_8px_rgba(245,158,11,0.8)]" />}
 
-                      <div className="flex items-center gap-2 mb-6 flex-wrap">
-                        <span className={`px-2.5 py-1 rounded-md text-[10px] uppercase tracking-widest font-bold border ${job.type === "diamonds" ? "bg-amber-500/10 text-amber-400 border-amber-500/20" : "bg-blue-500/10 text-blue-400 border-blue-500/20"}`}>
-                          {job.type === "diamonds" ? "💎 Diamonds" : "📋 PRL"}
-                        </span>
-                        {getStatusBadge(displayStatus)}
-                        {job.validationEnabled && (
-                          <span className="px-2.5 py-1 rounded-md text-[10px] uppercase tracking-widest font-bold bg-white/5 text-white/50 border border-white/10">
-                            ✓ MooGold
-                          </span>
-                        )}
-                        {chStats && chStats.length > 0 && (
-                          <button
-                            onClick={() => handleViewStats(job)}
-                            className="px-2.5 py-1 rounded-md text-[10px] uppercase tracking-widest font-bold bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20 transition-colors"
-                          >
-                            ✓ {chStats.length} CH COMPILED
-                          </button>
-                        )}
-                        {errCount > 0 && (
-                          <button
-                            onClick={() => handleViewErrors(job)}
-                            className="px-2.5 py-1 rounded-md text-[10px] uppercase tracking-widest font-bold bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500/20 transition-colors"
-                          >
-                            ⚠ {errCount} FAULTS
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="flex justify-between items-end">
-                        <div className="text-[10px] text-white/30 tracking-wider">
-                          <span className="block mb-1 opacity-50">LAST RUN</span>
-                          {formatTimeAgo(job.lastRunAt)}
-                        </div>
-                        {job.targetSpreadsheetId && (
-                          <a href={`https://docs.google.com/spreadsheets/d/${job.targetSpreadsheetId}`} target="_blank" rel="noopener noreferrer" className="group/link text-[11px] font-medium text-amber-500 flex items-center gap-1.5 bg-amber-500/5 hover:bg-amber-500/10 px-3 py-1.5 rounded-lg transition-colors border border-amber-500/10 uppercase tracking-wide">
-                            View Sheet
-                            <svg className="w-3 h-3 group-hover/link:translate-x-0.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
-                          </a>
-                        )}
-                      </div>
-
-                      {isRunning && (
-                        <div className="mt-5 space-y-2">
-                          <div className="flex justify-between text-[10px] tracking-wide uppercase">
-                            <span className="text-amber-500/80">{progressMessage || "Processing..."}</span>
-                            <span className="text-amber-400 font-mono font-bold">{progress}%</span>
-                          </div>
-                          <div className="h-1 bg-white/5 rounded-full overflow-hidden">
-                            <div className="h-full bg-amber-500 transition-all duration-300 rounded-full shadow-[0_0_10px_rgba(245,158,11,0.5)]" style={{ width: `${progress}%` }} />
+                      <div className="p-8 relative z-10">
+                        <div className="flex justify-between items-start gap-4 mb-6">
+                          <div className="flex gap-4 items-center w-full">
+                            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 shadow-lg ${job.type === "diamonds" ? "bg-amber-500 border border-amber-400/50 text-amber-950" : "bg-indigo-500 border border-indigo-400/50 text-indigo-950"}`}>
+                              {job.type === "diamonds" ? (
+                                <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                              ) : (
+                                <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                               <div className="font-black text-slate-50 text-2xl tracking-tight mb-1 truncate drop-shadow-sm">{job.name}</div>
+                               <div className="flex items-center gap-3 text-xs font-mono font-bold uppercase tracking-widest text-slate-400">
+                                 <span>ID: <span className="text-slate-300">{job.id.split("-")[0]}</span></span>
+                                 <span className="w-1 h-1 rounded-full bg-slate-600" />
+                                 <span className={job.type === "diamonds" ? "text-amber-500/80" : "text-indigo-400/80"}>
+                                   {job.type === "diamonds" ? "Diamond Sync" : "PRL Pipeline"}
+                                 </span>
+                               </div>
+                            </div>
                           </div>
                         </div>
-                      )}
+
+                        {/* Status Badges Section */}
+                        <div className="flex flex-wrap gap-2 mb-2">
+                           {getStatusBadge(displayStatus)}
+                           {job.validationEnabled && (
+                             <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] uppercase font-black bg-slate-800 text-slate-200 border border-slate-700 shadow-sm">
+                               <svg className="w-3.5 h-3.5 text-blue-400" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1.828-5.757l-2.828-2.829a1 1 0 111.414-1.414L8.172 9.586l4.414-4.414a1 1 0 111.414 1.414l-5.121 5.121a1 1 0 01-1.414 0z" clipRule="evenodd" /></svg>
+                               MooGold API
+                             </span>
+                           )}
+                           {chStats && chStats.length > 0 && (
+                             <button onClick={() => handleViewStats(job)} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] uppercase font-black bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-all shadow-sm">
+                               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+                               {chStats.length} Reports Compiled
+                             </button>
+                           )}
+                           {errCount > 0 && (
+                             <button onClick={() => handleViewErrors(job)} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] uppercase font-black bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 hover:text-red-300 transition-all shadow-sm group/btn">
+                               <svg className="w-3.5 h-3.5 group-hover/btn:animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                               {errCount} System Faults
+                             </button>
+                           )}
+                        </div>
+
+                        {isRunning && (
+                          <div className="mt-6 space-y-2.5 bg-slate-900/50 p-4 rounded-2xl border border-slate-700/50 backdrop-blur-sm">
+                            <div className="flex justify-between text-xs tracking-wide font-bold">
+                              <span className="text-amber-400 flex items-center gap-2">
+                                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                                {progressMessage || "Processing Sheets..."}
+                              </span>
+                              <span className="text-amber-500 font-mono text-sm">{progress}%</span>
+                            </div>
+                            <div className="h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+                              <div className="h-full bg-gradient-to-r from-amber-600 to-amber-400 transition-all duration-300 rounded-full shadow-[0_0_10px_rgba(245,158,11,0.5)] relative">
+                                <div className="absolute top-0 right-0 bottom-0 w-20 bg-gradient-to-r from-transparent to-white/30 animate-pulse" />
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Action Footer */}
+                      <div className="bg-slate-900/60 p-4 px-6 border-t border-slate-700/50 backdrop-blur-md flex justify-between items-center relative z-10 w-full sm:flex-row flex-col-reverse gap-4">
+                        <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto overflow-hidden">
+                           <button onClick={() => handleRunClick(job)} className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-[11px] uppercase tracking-widest text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500 hover:text-emerald-950 transition-all shadow-sm" title="Run Job">
+                             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> <span>Run Engine</span>
+                           </button>
+                           <Link href={`/jobs/${job.id}/edit`} className="p-2.5 rounded-xl text-slate-400 bg-slate-800 border border-slate-700 hover:text-white hover:bg-slate-700 transition-all shadow-sm" title="Edit Configuration">
+                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                           </Link>
+                           <button onClick={() => handleDeleteClick(job)} className="p-2.5 rounded-xl text-slate-500 bg-slate-800 border border-slate-700 hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/10 transition-all shadow-sm" title="Delete Pipeline">
+                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                           </button>
+                        </div>
+                        
+                        <div className="flex gap-4 items-center w-full sm:w-auto justify-between sm:justify-end">
+                          <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest text-left sm:text-right">
+                             Last Run: <span className="text-slate-300 ml-1">{formatTimeAgo(job.lastRunAt)}</span>
+                          </div>
+                          {job.targetSpreadsheetId && (
+                            <a href={`https://docs.google.com/spreadsheets/d/${job.targetSpreadsheetId}`} target="_blank" rel="noopener noreferrer" className="group/link shrink-0 inline-flex items-center justify-center p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-300 hover:bg-indigo-500 hover:border-indigo-400 hover:text-white transition-all shadow-sm" title="View Target Sheet">
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                            </a>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   );
                 })

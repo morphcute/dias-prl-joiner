@@ -201,10 +201,20 @@ export async function syncPrl(job: JoinerJob, runId: string) {
         const row = rows[r];
         for (let c = 0; c < row.length; c++) {
           const val = String(row[c] ?? "").trim().toUpperCase();
-          if (val === "NAME" || val === "PLAYERS NAME" || val === "PLAYER NAME" || val === "PLAYER'S NAME") nameCol = c;
-          if (val === "IGN" || val === "PLAYERS IGN" || val === "PLAYER IGN" || val === "PLAYER'S IGN" || val === "IN GAME NAME") ignCol = c;
-          if (val === "SERVER" || val === "# SERVER" || val === "SERVER ID" || val === "SERVERID") serverCol = c;
-          if (val === "UID" || val === "USER ID" || val === "ID" || val === "# UID" || val === "USERID") uidCol = c;
+          if (val === "") continue;
+
+          if ((val.includes("NAME") || val.includes("PLAYER")) && !val.includes("IGN") && !val.includes("GAME")) {
+            nameCol = c;
+          }
+          if (val === "IGN" || val.includes("IGN") || val.includes("GAME NAME")) {
+            ignCol = c;
+          }
+          if (val === "SERVER" || val.includes("SERVER")) {
+            serverCol = c;
+          }
+          if (val === "UID" || val.includes("UID") || val.includes("USER ID") || val === "ID") {
+            uidCol = c;
+          }
         }
         if (nameCol !== -1 && serverCol !== -1 && uidCol !== -1) {
           headerRowIdx = r;
@@ -310,6 +320,17 @@ export async function syncPrl(job: JoinerJob, runId: string) {
           errors.push({ chName, error: `Negative sign detected for player ${name} (Raw Server: ${server}, Raw UID: ${uid})` });
         }
 
+        // Detect if letters or the IGN were placed in the Server column BEFORE stripping
+        const rawServer = server;
+        const hasTextInServer = rawServer && /[a-zA-Z]/.test(rawServer);
+        if (hasTextInServer) {
+          if (ign && rawServer.toLowerCase() === ign.toLowerCase()) {
+            errors.push({ chName, error: `Added Players IGN instead of Server for player ${name}` });
+          } else {
+            errors.push({ chName, error: `Added text instead of numerical Server for player ${name} (Input: '${rawServer}')` });
+          }
+        }
+
         // Clean up any remaining non-digits (like minus signs, spaces, or letters)
         server = server.replace(/\D/g, "");
         uid = uid.replace(/\D/g, "");
@@ -317,11 +338,19 @@ export async function syncPrl(job: JoinerJob, runId: string) {
         // Validation: Missing Server or UID
         if (!server || !uid) {
           const playerName = name || ign || "Unknown";
-          errors.push({ chName, error: `Missing Server or UID for player ${playerName} (Server: '${server || "BLANK"}', UID: '${uid || "BLANK"}')` });
+          // Only throw 'Missing' if we haven't already explained why it's missing (e.g., they put text there)
+          if (!hasTextInServer) {
+            errors.push({ chName, error: `Missing Server or UID for player ${playerName} (Server: '${server || "BLANK"}', UID: '${uid || "BLANK"}')` });
+          }
         }
 
         const sLen = server.length;
         const uLen = uid.length;
+
+        // Validation: Check for unusually short UIDs indicating Server-only entry
+        if (uLen > 0 && uLen <= 5) {
+          errors.push({ chName, error: `Missing UID because the CH type ${uLen} numbers only for player ${name}` });
+        }
 
         // Validation: Swapped server/UID in 4-column setup
         if (sLen > 5 && uLen > 0 && uLen < 6) {
@@ -341,10 +370,10 @@ export async function syncPrl(job: JoinerJob, runId: string) {
             isDuplicate = true;
             const prevCh = seenUids.get(uniquePlayerIdentifier)!;
             errors.push({ chName, error: `Duplicate player entry found: ${name} (Server: ${server}, UID: ${uid}) was already registered in CH ${prevCh.chName}` });
-            
+
             // Push the first occurrence index to the list so BOTH get highlighted!
             if (!duplicateRowIndices.includes(prevCh.rowIdx)) {
-               duplicateRowIndices.push(prevCh.rowIdx);
+              duplicateRowIndices.push(prevCh.rowIdx);
             }
           } else {
             // Track the row index that this player will occupy in the final sheet
@@ -640,10 +669,10 @@ export async function syncPrl(job: JoinerJob, runId: string) {
 
   await prisma.joinerRun.update({
     where: { id: runId },
-    data: { 
-       errors: JSON.stringify(errors),
-       // @ts-ignore
-       chStats: JSON.stringify(chStats),
+    data: {
+      errors: JSON.stringify(errors),
+      // @ts-ignore
+      chStats: JSON.stringify(chStats),
     },
   });
 
