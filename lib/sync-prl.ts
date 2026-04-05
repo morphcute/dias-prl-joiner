@@ -296,7 +296,7 @@ export async function syncPrl(job: JoinerJob, runId: string) {
           uid = mIgn.u;
           server = mIgn.s;
           ign = "";
-          errors.push({ chName, error: `Interchanged and Mixed Server/UID for player ${name} (Server: ${server}, UID: ${uid})` });
+          // Auto-fixed interchanged and mixed ID, no error thrown
         }
 
         const ignIsNum = /^-?\d+$/.test(ign);
@@ -316,7 +316,7 @@ export async function syncPrl(job: JoinerJob, runId: string) {
             uid = ign;
             // server stays in D
             ign = "";
-            errors.push({ chName, error: `Interchanged Server/UID for player ${name} (Server: ${server}, UID: ${uid})` });
+            // Auto-fixed interchanged IDs, no error thrown
           } else {
             // Catch-all: BOTH are short (user entered server twice) or both are long. Still shifted!
             uid = server;
@@ -357,22 +357,25 @@ export async function syncPrl(job: JoinerJob, runId: string) {
           }
         }
 
-        const sLen = server.length;
-        const uLen = uid.length;
+        let sLen = server.length;
+        let uLen = uid.length;
+
+        // Validation: Swapped server/UID in 4-column setup
+        if (sLen > 5 && uLen > 0 && uLen < 6) {
+          // Auto-swap silently
+          const temp = server;
+          server = uid;
+          uid = temp;
+          sLen = server.length;
+          uLen = uid.length;
+        }
 
         // Validation: Check for unusually short UIDs indicating Server-only entry
         if (uLen > 0 && uLen <= 5) {
           errors.push({ chName, error: `Missing UID because the CH type ${uLen} numbers only for player ${name}` });
         }
 
-        // Validation: Swapped server/UID in 4-column setup
-        if (sLen > 5 && uLen > 0 && uLen < 6) {
-          errors.push({ chName, error: `Interchanged Server/UID for player ${name} (Server: ${server}, UID: ${uid})` });
-          // Auto-swap
-          const temp = server;
-          server = uid;
-          uid = temp;
-        } else if (sLen > 5 && !uid) {
+        if (sLen > 5 && !uid) {
           errors.push({ chName, error: `Server length is unusually long for player ${name} (Server: ${server})` });
         }
 
