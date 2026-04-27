@@ -4,6 +4,8 @@ import { NextResponse } from "next/server";
 import { syncDiamonds } from "@/lib/sync-diamonds";
 import { syncPrl } from "@/lib/sync-prl";
 
+export const maxDuration = 300; // 5 minutes (Needed for MooGold verifier which takes time)
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -23,17 +25,20 @@ export async function POST(
     return NextResponse.json({ error: "Job not found" }, { status: 404 });
   }
 
-  // Create a run record
-  const run = await prisma.joinerRun.create({
-    data: {
-      jobId: job.id,
-      status: "running",
-      progress: 0,
-      progressMessage: "Starting...",
-    },
-  });
+  let runId: string | undefined;
 
   try {
+    // Create a run record safely inside try-catch
+    const run = await prisma.joinerRun.create({
+      data: {
+        jobId: job.id,
+        status: "running",
+        progress: 0,
+        progressMessage: "Starting...",
+      },
+    });
+    runId = run.id;
+
     let result;
     if (job.type === "diamonds") {
       result = await syncDiamonds(job, run.id);
@@ -66,15 +71,21 @@ export async function POST(
       runId: run.id,
     });
   } catch (error: any) {
-    await prisma.joinerRun.update({
-      where: { id: run.id },
-      data: {
-        status: "failed",
-        progress: 100,
-        progressMessage: `Failed: ${error.message}`,
-        completedAt: new Date(),
-      },
-    });
+    if (runId) {
+      try {
+        await prisma.joinerRun.update({
+          where: { id: runId },
+          data: {
+            status: "failed",
+            progress: 100,
+            progressMessage: `Failed: ${error.message}`,
+            completedAt: new Date(),
+          },
+        });
+      } catch (updateError) {
+        console.error("Failed to update run status after error:", updateError);
+      }
+    }
 
     return NextResponse.json(
       { error: error.message || "Sync failed" },
