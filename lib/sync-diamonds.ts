@@ -284,9 +284,9 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
       // Extract data rows
       for (let r = headerRowIdx + 1; r < rows.length; r++) {
         const row = rows[r];
-        const name = String(row[nameCol] ?? "").trim();
-        const server = String(row[serverCol] ?? "").trim();
-        const uid = String(row[uidCol] ?? "").trim();
+        let name = String(row[nameCol] ?? "").trim();
+        let server = String(row[serverCol] ?? "").trim();
+        let uid = String(row[uidCol] ?? "").trim();
         const code = codeCol !== -1 ? String(row[codeCol] ?? "").trim() : "";
         const amount = amountCol !== -1 ? String(row[amountCol] ?? "").trim() : "";
         const remarks = remarksCol !== -1 ? String(row[remarksCol] ?? "").trim() : "";
@@ -298,7 +298,86 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
           continue;
         }
 
-        if (name.toUpperCase() === "TOTAL" || name.toUpperCase() === "TOTALS") continue;
+        const upperName = name.toUpperCase();
+        if (upperName === "TOTAL" || upperName === "TOTALS") continue;
+
+        // Pre-parse mixed IDs e.g. "243906066 (3533)" into separate nums
+        const parseMixedId = (str: string) => {
+          const nums = str.match(/\d+/g);
+          if (nums && nums.length >= 2) {
+            const n1 = nums[0];
+            const n2 = nums[1];
+            if (n1.length > 5 && n2.length <= 6) return { u: n1, s: n2 };
+            if (n2.length > 5 && n1.length <= 6) return { u: n2, s: n1 };
+          }
+          return null;
+        };
+
+        const isValidServerVal = (str: string) => {
+          const clean = str.trim().replace(/\D/g, "");
+          return clean.length >= 3 && clean.length <= 6;
+        };
+
+        const isValidUidVal = (str: string) => {
+          const clean = str.trim().replace(/\D/g, "");
+          return clean.length >= 7 && clean.length <= 12;
+        };
+
+        // Report spaces or formatting in raw inputs
+        if (uid && /\s/.test(uid)) {
+          errors.push({ chName, error: `UID contains spaces for player ${name} (Input: '${uid}')` });
+        }
+        if (server && /\s/.test(server)) {
+          errors.push({ chName, error: `Server contains spaces for player ${name} (Input: '${server}')` });
+        }
+
+        const mUid = !isValidServerVal(server) ? parseMixedId(uid) : null;
+        const mServer = !isValidUidVal(uid) ? parseMixedId(server) : null;
+
+        if (mUid) {
+          uid = mUid.u;
+          server = mUid.s;
+          errors.push({ chName, error: `Mixed Server/UID extracted for player ${name} (Server: ${server}, UID: ${uid})`, type: "validation_fixed" });
+        } else if (mServer) {
+          uid = mServer.u;
+          server = mServer.s;
+          errors.push({ chName, error: `Mixed Server/UID extracted for player ${name} (Server: ${server}, UID: ${uid})`, type: "validation_fixed" });
+        }
+
+        // Check for negative values
+        if (server.includes("-") || uid.includes("-")) {
+          errors.push({ chName, error: `Negative sign detected for player ${name} (Raw Server: ${server}, Raw UID: ${uid})` });
+        }
+
+        // Clean up any remaining non-digits (like minus signs, spaces, or letters)
+        server = server.replace(/\D/g, "");
+        uid = uid.replace(/\D/g, "");
+
+        // Validation: Missing Server or UID
+        if (!server || !uid) {
+          const playerName = name || "Unknown";
+          errors.push({ chName, error: `Missing Server or UID for player ${playerName} (Server: '${server || "BLANK"}', UID: '${uid || "BLANK"}')` });
+        }
+
+        let sLen = server.length;
+        let uLen = uid.length;
+
+        // Validation: Swapped server/UID
+        if (sLen > 5 && uLen > 0 && uLen < 6) {
+          const temp = server;
+          server = uid;
+          uid = temp;
+          sLen = server.length;
+          uLen = uid.length;
+        }
+
+        if (uLen > 0 && uLen <= 5) {
+          errors.push({ chName, error: `Missing UID because the CH type ${uLen} numbers only for player ${name}` });
+        }
+
+        if (sLen > 5 && !uid) {
+          errors.push({ chName, error: `Server length is unusually long for player ${name} (Server: ${server})` });
+        }
 
         if (!remarks.toUpperCase().includes("CH HANDLER")) {
            playerCount++;

@@ -330,14 +330,32 @@ export async function syncPrl(job: JoinerJob, runId: string) {
           return null;
         };
 
-        const mUid = parseMixedId(uid);
-        const mServer = parseMixedId(server);
-        const mIgn = parseMixedId(ign);
+        const isValidServerVal = (str: string) => {
+          const clean = str.trim().replace(/\D/g, "");
+          return clean.length >= 3 && clean.length <= 6;
+        };
+
+        const isValidUidVal = (str: string) => {
+          const clean = str.trim().replace(/\D/g, "");
+          return clean.length >= 7 && clean.length <= 12;
+        };
+
+        // Report spaces or formatting in raw inputs
+        if (uid && /\s/.test(uid)) {
+          errors.push({ chName, error: `UID contains spaces for player ${name} (Input: '${uid}')` });
+        }
+        if (server && /\s/.test(server)) {
+          errors.push({ chName, error: `Server contains spaces for player ${name} (Input: '${server}')` });
+        }
+
+        const mUid = !isValidServerVal(server) ? parseMixedId(uid) : null;
+        const mServer = !isValidUidVal(uid) ? parseMixedId(server) : null;
+        const mIgn = ignCol !== -1 && !isValidServerVal(server) && !isValidUidVal(uid) ? parseMixedId(ign) : null;
 
         if (mUid) {
           uid = mUid.u;
           server = mUid.s;
-          errors.push({ chName, error: `Mixed Server/UID extracted for player ${name} (Server: ${server}, UID: ${uid})` });
+          errors.push({ chName, error: `Mixed Server/UID extracted for player ${name} (Server: ${server}, UID: ${uid})`, type: "validation_fixed" });
         } else if (mServer) {
           // Col D has mixed. In 4-col this is UID column.
           uid = mServer.u;
@@ -347,7 +365,7 @@ export async function syncPrl(job: JoinerJob, runId: string) {
           } else {
             server = mServer.s;
           }
-          errors.push({ chName, error: `Mixed Server/UID extracted for player ${name} (Server: ${server}, UID: ${uid})` });
+          errors.push({ chName, error: `Mixed Server/UID extracted for player ${name} (Server: ${server}, UID: ${uid})`, type: "validation_fixed" });
         } else if (mIgn) {
           // Col C has mixed. In 4-col this is SERVER column. Interchanged + Mixed!
           uid = mIgn.u;

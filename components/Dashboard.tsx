@@ -232,42 +232,158 @@ export default function Dashboard() {
     const dissolved = criticals.filter(c => getErrorType(c) === "dissolved");
     const accessibility = criticals.filter(c => getErrorType(c) === "accessibility");
 
-    let report = `=== OPERATION SUMMARY REPORT: ${selectedJob.name} ===\n`;
-    report += `Run ID: ${run.id}\n`;
-    report += `Type: ${selectedJob.type === "diamonds" ? "Diamond Rewards" : "PRL Pipeline"}\n`;
-    report += `Date: ${new Date(run.startedAt).toLocaleString()}\n`;
-    report += `Status: ${run.status.toUpperCase()}\n`;
-    report += `Rows Written: ${run.rowsWritten}\n\n`;
+    const formatDate = (dateStr: string) => {
+      const d = new Date(dateStr);
+      const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+      const month = months[d.getMonth()];
+      const day = d.getDate();
+      const year = d.getFullYear();
+      let hours = d.getHours();
+      const minutes = String(d.getMinutes()).padStart(2, "0");
+      const ampm = hours >= 12 ? "PM" : "AM";
+      hours = hours % 12;
+      hours = hours ? hours : 12;
+      return `${month} ${day}, ${year} • ${hours}:${minutes} ${ampm}`;
+    };
+
+    const parseDissolvedError = (errStr: string) => {
+      const match = errStr.match(/only (\d+) valid players.*Mode:\s*(.*?),\s*Target:\s*(\d+),\s*Minimum allowed:\s*(\d+)/i);
+      if (match) {
+        return {
+          actual: match[1],
+          mode: match[2],
+          target: match[3],
+          min: match[4]
+        };
+      }
+      return null;
+    };
+
+    const autoFixesGrouped: Record<string, string[]> = {};
+    autoFixes.forEach(f => {
+      const ch = f.chName;
+      if (!autoFixesGrouped[ch]) {
+        autoFixesGrouped[ch] = [];
+      }
+      
+      const mixedMatch = f.error.match(/Mixed Server\/UID extracted for player (.*) \(Server: (.*), UID: (.*)\)/i);
+      if (mixedMatch) {
+        autoFixesGrouped[ch].push(
+          ` • Mixed Server/UID extracted\n   Player : ${mixedMatch[1]}\n   Server : ${mixedMatch[2]}\n   UID    : ${mixedMatch[3]}`
+        );
+      } else if (f.error.includes("column mapping")) {
+        autoFixesGrouped[ch].push(
+          ` • Column mapping automatically corrected\n   (Misaligned headers detected)`
+        );
+      } else if (f.error.includes("interchanged")) {
+        const playerMatch = f.error.match(/player (.*)/i);
+        const namePart = playerMatch ? playerMatch[1] : "Unknown";
+        autoFixesGrouped[ch].push(
+          ` • Swapped Server/UID columns automatically corrected\n   Player : ${namePart}`
+        );
+      } else {
+        autoFixesGrouped[ch].push(` • ${f.error}`);
+      }
+    });
+
+    const validationGrouped: Record<string, string[]> = {};
+    validationErrors.forEach(v => {
+      const ch = v.chName;
+      if (!validationGrouped[ch]) {
+        validationGrouped[ch] = [];
+      }
+      
+      const textServerMatch = v.error.match(/Added text instead of numerical Server for player (.*) \(Input: '(.*)'\)/i);
+      const ignServerMatch = v.error.match(/Added Players IGN instead of Server for player (.*)/i);
+      const missingMatch = v.error.match(/Missing Server or UID for player (.*) \(Server: '(.*)', UID: '(.*)'\)/i);
+      const shortUidMatch = v.error.match(/Missing UID because the CH type (.*) numbers only for player (.*)/i);
+      const spaceMatch = v.error.match(/UID contains spaces for player (.*) \(Input: '(.*)'\)/i);
+      const negativeMatch = v.error.match(/Negative sign detected for player (.*) \(Raw Server: (.*), Raw UID: (.*)\)/i);
+
+      if (textServerMatch) {
+        validationGrouped[ch].push(
+          ` • Player : ${textServerMatch[1]}\n   Error  : Server must be numeric\n   Input  : "${textServerMatch[2]}"`
+        );
+      } else if (ignServerMatch) {
+        validationGrouped[ch].push(
+          ` • Player : ${ignServerMatch[1]}\n   Error  : Player IGN entered instead of Server`
+        );
+      } else if (missingMatch) {
+        validationGrouped[ch].push(
+          ` • Player : ${missingMatch[1]}\n   Error  : Missing Server or UID\n   Input  : Server: '${missingMatch[2]}', UID: '${missingMatch[3]}'`
+        );
+      } else if (shortUidMatch) {
+        validationGrouped[ch].push(
+          ` • Player : ${shortUidMatch[2]}\n   Error  : Missing UID (only typed server/short ID)`
+        );
+      } else if (spaceMatch) {
+        validationGrouped[ch].push(
+          ` • Player : ${spaceMatch[1]}\n   Error  : UID contains spaces\n   Input  : "${spaceMatch[2]}"`
+        );
+      } else if (negativeMatch) {
+        validationGrouped[ch].push(
+          ` • Player : ${negativeMatch[1]}\n   Error  : Negative sign detected in IDs`
+        );
+      } else {
+        validationGrouped[ch].push(` • Error  : ${v.error}`);
+      }
+    });
+
+    let report = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    report += `📊 ${selectedJob.name.toUpperCase()}\n`;
+    report += `OPERATION SUMMARY REPORT\n`;
+    report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
     
-    report += `--- METRICS ---\n`;
-    report += `- Compiled CHs: ${viewStats.length}\n`;
-    report += `- Total Active Players/Winners: ${totalPlayers}\n`;
-    report += `- Critical Failures (Inaccessible/Dissolved): ${criticals.length}\n`;
-    report += `- Duplicate Entries: ${duplicates.length}\n`;
-    report += `- Auto-Fixes Applied: ${autoFixes.length}\n`;
-    report += `- Unfixed Validation Errors: ${validationErrors.length}\n\n`;
+    report += `🆔 Run ID     : ${run.id}\n`;
+    report += `⚙️ Pipeline   : ${selectedJob.type === "diamonds" ? "Diamond Rewards" : "PRL Pipeline"}\n`;
+    report += `📅 Date       : ${formatDate(run.startedAt)}\n`;
+    report += `✅ Status     : ${run.status.toUpperCase()}\n`;
+    report += `📝 Rows Saved : ${Number(run.rowsWritten).toLocaleString()}\n\n`;
     
+    report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    report += `📈 OVERALL METRICS\n`;
+    report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    
+    report += `👥 Compiled CHs               : ${viewStats.length}\n`;
+    report += `🏆 Active Players/Winners     : ${totalPlayers}\n`;
+    report += `❌ Dissolved Tournaments       : ${dissolved.length}\n`;
+    report += `🔁 Duplicate Entries          : ${duplicates.length}\n`;
+    report += `🔧 Auto Fixes Applied         : ${autoFixes.length}\n`;
+    report += `⚠️ Validation Errors          : ${validationErrors.length}\n\n`;
+
     if (dissolved.length > 0) {
-      report += `--- DISSOLVED TOURNAMENTS REPORT ---\n`;
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      report += `🚨 DISSOLVED TOURNAMENTS (${dissolved.length})\n`;
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+      
       dissolved.forEach(d => {
-        report += `- [${d.chName.toUpperCase()}] ${d.error}\n`;
+        report += `❌ ${d.chName.toUpperCase()}\n`;
+        const parsed = parseDissolvedError(d.error);
+        if (parsed) {
+          report += `   └─ Only ${parsed.actual} valid players found\n`;
+          report += `      Mode      : ${parsed.mode}\n`;
+          report += `      Required  : ${parsed.target}\n`;
+          report += `      Minimum   : ${parsed.min}\n\n`;
+        } else {
+          report += `   └─ ${d.error}\n\n`;
+        }
       });
-      report += `\n`;
     }
 
     if (accessibility.length > 0) {
-      report += `--- ACCESSIBILITY & LINK FAULTS ---\n`;
-      accessibility.forEach(a => {
-        report += `- [${a.chName.toUpperCase()}] ${a.error}\n`;
-      });
-      report += `\n`;
-    }
-    
-    if (duplicates.length > 0) {
-      report += `--- DUPLICATES REPORT ---\n`;
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      report += `🔓 ACCESSIBILITY & LINK FAULTS (${accessibility.length})\n`;
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
       
+      accessibility.forEach(a => {
+        report += `❌ ${a.chName.toUpperCase()}\n`;
+        report += `   └─ ${a.error}\n\n`;
+      });
+    }
+
+    if (duplicates.length > 0) {
       const internal: Record<string, { name: string; server: string; uid: string }[]> = {};
-      const cross: Record<string, { name: string; server: string; uid: string; prevCh: string }[]> = {};
+      const cross: Record<string, Record<string, { name: string; server: string; uid: string }[]>> = {};
 
       duplicates.forEach(d => {
         const parsed = parseDuplicateError(d);
@@ -289,62 +405,104 @@ export default function Dashboard() {
           }
         } else {
           if (!cross[currCh]) {
-            cross[currCh] = [];
+            cross[currCh] = {};
           }
-          if (!cross[currCh].some(p => p.uid === parsed.uid)) {
-            cross[currCh].push({ name: parsed.name, server: parsed.server, uid: parsed.uid, prevCh });
+          if (!cross[currCh][prevCh]) {
+            cross[currCh][prevCh] = [];
+          }
+          if (!cross[currCh][prevCh].some(p => p.uid === parsed.uid)) {
+            cross[currCh][prevCh].push({ name: parsed.name, server: parsed.server, uid: parsed.uid });
           }
         }
       });
 
-      // 1. Cross-Host duplicates
       const crossKeys = Object.keys(cross).sort();
       if (crossKeys.length > 0) {
-        report += `[CROSS-HOST DUPLICATES (Registered across different CHs)]\n`;
-        crossKeys.forEach(ch => {
-          const list = cross[ch];
-          report += `[${ch.toUpperCase()}] List ${list.length} player(s) duplicate:\n`;
-          list.forEach(p => {
-            report += `  - ${p.name} (Server: ${p.server}, UID: ${p.uid}) -> Duplicated with CH ${p.prevCh}\n`;
+        report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        report += `🔁 CROSS-HOST DUPLICATES\n`;
+        report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+        
+        crossKeys.forEach((ch, idx) => {
+          if (idx > 0) {
+            report += `──────────────────────────────────────\n\n`;
+          }
+          const prevChs = Object.keys(cross[ch]).sort();
+          prevChs.forEach((prevCh, pIdx) => {
+            if (pIdx > 0) report += `\n`;
+            const list = cross[ch][prevCh];
+            report += `【${ch.toUpperCase()}】 ${list.length} duplicate(s)\n`;
+            report += `Duplicated with ► ${prevCh}\n\n`;
+            list.forEach(p => {
+              report += ` • ${p.name}\n`;
+              report += `   Server: ${p.server}\n`;
+              report += `   UID   : ${p.uid}\n\n`;
+            });
           });
         });
-        report += `\n`;
       }
 
-      // 2. Internal duplicates
       const internalKeys = Object.keys(internal).sort();
       if (internalKeys.length > 0) {
-        report += `[INTERNAL DUPLICATES (Registered multiple times inside same CH sheet)]\n`;
-        internalKeys.forEach(ch => {
+        report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        report += `📄 INTERNAL DUPLICATES\n`;
+        report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+        
+        internalKeys.forEach((ch, idx) => {
+          if (idx > 0) {
+            report += `──────────────────────────────────────\n\n`;
+          }
           const list = internal[ch];
-          report += `[${ch.toUpperCase()}] List ${list.length} player(s) duplicate:\n`;
+          report += `【${ch.toUpperCase()}】 ${list.length} duplicate(s)\n\n`;
           list.forEach(p => {
+            report += ` • ${p.name}\n`;
             if (p.server) {
-              report += `  - ${p.name} (Server: ${p.server}, UID: ${p.uid})\n`;
+              report += `   Server: ${p.server}\n`;
+              report += `   UID   : ${p.uid}\n\n`;
             } else {
-              report += `  - ${p.name}\n`;
+              report += `\n`;
             }
           });
         });
-        report += `\n`;
       }
     }
-    
-    if (autoFixes.length > 0) {
-      report += `--- AUTO-FIXES APPLIED ---\n`;
-      autoFixes.forEach(f => {
-        report += `[${f.chName}] ${f.error}\n`;
+
+    const autoFixKeys = Object.keys(autoFixesGrouped).sort();
+    if (autoFixKeys.length > 0) {
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      report += `🔧 AUTO FIXES\n`;
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+      
+      autoFixKeys.forEach((ch, idx) => {
+        if (idx > 0) {
+          report += `──────────────────────────────────────\n\n`;
+        }
+        report += `✅ ${ch}\n\n`;
+        autoFixesGrouped[ch].forEach(f => {
+          report += `${f}\n\n`;
+        });
       });
-      report += `\n`;
     }
 
-    if (validationErrors.length > 0) {
-      report += `--- UNFIXED VALIDATION ERRORS ---\n`;
-      validationErrors.forEach(v => {
-        report += `[${v.chName}] ${v.error}\n`;
+    const valKeys = Object.keys(validationGrouped).sort();
+    if (valKeys.length > 0) {
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      report += `⚠️ VALIDATION ERRORS\n`;
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+      
+      valKeys.forEach((ch, idx) => {
+        if (idx > 0) {
+          report += `──────────────────────────────────────\n\n`;
+        }
+        report += `❌ ${ch}\n\n`;
+        validationGrouped[ch].forEach(v => {
+          report += `${v}\n\n`;
+        });
       });
-      report += `\n`;
     }
+    
+    report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    report += `✅ REPORT COMPLETE\n`;
+    report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
     
     navigator.clipboard.writeText(report);
     toast("Summary report copied to clipboard!", "success");
