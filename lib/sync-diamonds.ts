@@ -12,13 +12,20 @@ interface ChError {
   type?: string;
 }
 
+interface ChEntry {
+  chName: string;
+  url: string;
+  responseSheetUrl?: string;
+  registeredTeams?: string;
+}
+
 async function readChEntriesFromReportingSheet(
   sheets: any,
   spreadsheetId: string,
   sheetName: string,
   type: "prl" | "diamonds"
-): Promise<{ entries: { chName: string; url: string }[]; errors: ChError[] }> {
-  const entries: { chName: string; url: string }[] = [];
+): Promise<{ entries: ChEntry[]; errors: ChError[] }> {
+  const entries: ChEntry[] = [];
   const errors: ChError[] = [];
 
   const result = await sheets.spreadsheets.values.get({
@@ -32,7 +39,7 @@ async function readChEntriesFromReportingSheet(
     return { entries, errors };
   }
 
-  const { nicknameCol, linkCol, headerRowIdx } = detectReportingSheetColumns(rows, type);
+  const { nicknameCol, linkCol, responseSheetCol, registeredTeamsCol, headerRowIdx } = detectReportingSheetColumns(rows, type);
 
   if (nicknameCol === -1 || linkCol === -1) {
     const missing = nicknameCol === -1 ? (linkCol === -1 ? "CH Nickname and Link" : "CH Nickname") : "Link";
@@ -63,7 +70,15 @@ async function readChEntriesFromReportingSheet(
       continue;
     }
 
-    entries.push({ chName: chNickname, url: link });
+    const responseSheetUrl = responseSheetCol !== -1 ? String(row[responseSheetCol] ?? "").trim() : "";
+    const registeredTeams = registeredTeamsCol !== -1 ? String(row[registeredTeamsCol] ?? "").trim() : "";
+
+    entries.push({ 
+      chName: chNickname, 
+      url: link,
+      responseSheetUrl,
+      registeredTeams
+    });
   }
 
   console.log(`[ReportingSheet] Found ${entries.length} valid CH entries with links dynamically`);
@@ -145,7 +160,12 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
   await updateProgress(5, `Found ${totalCh} CHs with Diamond links. Resolving URLs...`);
 
   // Step 2: Resolve all URLs
-  const resolvedEntries: { chName: string; spreadsheetId: string }[] = [];
+  const resolvedEntries: { 
+    chName: string; 
+    spreadsheetId: string; 
+    responseSheetUrl?: string; 
+    registeredTeams?: string; 
+  }[] = [];
 
   for (let i = 0; i < chEntries.length; i++) {
     const ch = chEntries[i];
@@ -168,8 +188,39 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
       continue;
     }
 
-    resolvedEntries.push({ chName: ch.chName, spreadsheetId: (result as ResolveResult).spreadsheetId });
+    resolvedEntries.push({ 
+      chName: ch.chName, 
+      spreadsheetId: (result as ResolveResult).spreadsheetId,
+      responseSheetUrl: ch.responseSheetUrl,
+      registeredTeams: ch.registeredTeams
+    });
   }
+
+  const getRegisteredTeamsCount = async (chEntry: any) => {
+    if (chEntry.responseSheetUrl) {
+      try {
+        const resResult = await resolveUrl(chEntry.responseSheetUrl);
+        if (!("error" in resResult)) {
+          const resSpreadsheetId = (resResult as ResolveResult).spreadsheetId;
+          const resSheet = await sheets.spreadsheets.values.get({
+            spreadsheetId: resSpreadsheetId,
+            range: "A1:Z100",
+          });
+          const resRows = resSheet.data.values || [];
+          if (resRows.length > 1) {
+            return resRows.length - 1;
+          }
+        }
+      } catch (e) {
+        console.log(`Failed to read response sheet for ${chEntry.chName}:`, e);
+      }
+    }
+    if (chEntry.registeredTeams) {
+      const parsed = parseInt(chEntry.registeredTeams.replace(/\D/g, ""));
+      if (!isNaN(parsed)) return parsed;
+    }
+    return 0;
+  };
 
   // Step 3: Read each CH's sheet
   await updateProgress(20, "Reading CH diamond sheets...");
@@ -218,7 +269,12 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
 
       const rows = sheetData.data.values;
       if (!rows || rows.length === 0) {
-        errors.push({ chName, error: "Sheet is blank/empty" });
+        const teamsCount = await getRegisteredTeamsCount(resolvedEntries[i]);
+        let teamsMessage = "";
+        if (teamsCount > 0) {
+          teamsMessage = `.(Teams in responses sheet: ${teamsCount})`;
+        }
+        errors.push({ chName, error: `Sheet is blank/empty.${teamsMessage}` });
         continue;
       }
 
@@ -418,7 +474,12 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
       chStats.push({ chName, count: playerCount });
 
       if (playerCount === 0) {
-        errors.push({ chName, error: `Empty Tournament: No actual players found in the sheet. (Did the CH forget to input players?)` });
+        const teamsCount = await getRegisteredTeamsCount(resolvedEntries[i]);
+        let teamsMessage = "";
+        if (teamsCount > 0) {
+          teamsMessage = `.(Teams in responses sheet: ${teamsCount})`;
+        }
+        errors.push({ chName, error: `Empty Tournament: No actual players found in the sheet.${teamsMessage}` });
       }
     } catch (error: any) {
       const msg = error?.message || String(error);

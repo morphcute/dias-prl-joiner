@@ -188,9 +188,17 @@ export function adjustColumnsBasedOnData(
 export function detectReportingSheetColumns(
   rows: string[][],
   type: "prl" | "diamonds"
-): { nicknameCol: number; linkCol: number; headerRowIdx: number } {
+): { 
+  nicknameCol: number; 
+  linkCol: number; 
+  responseSheetCol: number;
+  registeredTeamsCol: number;
+  headerRowIdx: number;
+} {
   let nicknameCol = -1;
   let linkCol = -1;
+  let responseSheetCol = -1;
+  let registeredTeamsCol = -1;
   let headerRowIdx = -1;
 
   // Scan the first 10 rows for headers
@@ -205,6 +213,16 @@ export function detectReportingSheetColumns(
         nicknameCol = c;
       } else if (nicknameCol === -1 && (val === "NICKNAME" || val.includes("CH NAME") || val.includes("CH FULL NAME"))) {
         nicknameCol = c;
+      }
+
+      // Response sheet link column
+      if (val.includes("RESPONSE SHEET") || val.includes("RESPONSES") || val.includes("RESPONSE LINK")) {
+        responseSheetCol = c;
+      }
+
+      // Number of registered teams column
+      if (val.includes("REGISTERED TEAMS") || val.includes("NUMBER OF TEAMS") || val.includes("NO. OF TEAMS") || val.includes("TEAM COUNT")) {
+        registeredTeamsCol = c;
       }
 
       // Detect Link column depending on type
@@ -240,7 +258,7 @@ export function detectReportingSheetColumns(
     }
   }
 
-  return { nicknameCol, linkCol, headerRowIdx };
+  return { nicknameCol, linkCol, responseSheetCol, registeredTeamsCol, headerRowIdx };
 }
 
 

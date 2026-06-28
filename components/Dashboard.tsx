@@ -247,13 +247,14 @@ export default function Dashboard() {
     };
 
     const parseDissolvedError = (errStr: string) => {
-      const match = errStr.match(/only (\d+) valid players.*Mode:\s*(.*?),\s*Target:\s*(\d+),\s*Minimum allowed:\s*(\d+)/i);
+      const match = errStr.match(/only (\d+) valid players.*Mode:\s*(.*?),\s*Target:\s*(\d+),\s*Minimum allowed:\s*(\d+)(?:\.\s*\(Teams in responses sheet:\s*(\d+)\))?/i);
       if (match) {
         return {
           actual: match[1],
           mode: match[2],
           target: match[3],
-          min: match[4]
+          min: match[4],
+          teams: match[5] || null
         };
       }
       return null;
@@ -363,7 +364,11 @@ export default function Dashboard() {
           report += `   └─ Only ${parsed.actual} valid players found\n`;
           report += `      Mode      : ${parsed.mode}\n`;
           report += `      Required  : ${parsed.target}\n`;
-          report += `      Minimum   : ${parsed.min}\n\n`;
+          report += `      Minimum   : ${parsed.min}\n`;
+          if (parsed.teams) {
+            report += `      Teams in responses sheet : ${parsed.teams}\n`;
+          }
+          report += `\n`;
         } else {
           report += `   └─ ${d.error}\n\n`;
         }
@@ -377,7 +382,13 @@ export default function Dashboard() {
       
       accessibility.forEach(a => {
         report += `❌ ${a.chName.toUpperCase()}\n`;
-        report += `   └─ ${a.error}\n\n`;
+        const match = a.error.match(/(.*?)\.\s*\(Teams in responses sheet:\s*(\d+)\)/i);
+        if (match) {
+          report += `   ├─ ${match[1]}\n`;
+          report += `   └─ Teams in responses sheet : ${match[2]}\n\n`;
+        } else {
+          report += `   └─ ${a.error}\n\n`;
+        }
       });
     }
 
