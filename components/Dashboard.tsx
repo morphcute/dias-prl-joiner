@@ -63,6 +63,8 @@ export default function Dashboard() {
   const [statsModalOpen, setStatsModalOpen] = useState(false);
   const [activeLogTab, setActiveLogTab] = useState<"overview" | "chHealth" | "duplicates" | "logs">("overview");
   const [modalSearch, setModalSearch] = useState("");
+  const [startingJobs, setStartingJobs] = useState<Set<string>>(new Set());
+  const [stoppingJobs, setStoppingJobs] = useState<Set<string>>(new Set());
 
   const getDisplayStatus = (job: JoinerJob): string | undefined => {
     const live = runProgress.get(job.id);
@@ -252,10 +254,68 @@ export default function Dashboard() {
     
     if (duplicates.length > 0) {
       report += `--- DUPLICATES REPORT ---\n`;
+      
+      const internal: Record<string, { name: string; server: string; uid: string }[]> = {};
+      const crossMap = new Map<string, Set<string>>(); // uid -> set of CHs
+      const playerDetails = new Map<string, { name: string; server: string; uid: string }>(); // uid -> info
+
       duplicates.forEach(d => {
-        report += `[${d.chName}] ${d.error}\n`;
+        const parsed = parseDuplicateError(d);
+        if (!parsed) {
+          if (!internal["Other"]) internal["Other"] = [];
+          internal["Other"].push({ name: d.error, server: "", uid: "" });
+          return;
+        }
+
+        if (parsed.prevCh.trim().toLowerCase() === parsed.currCh.trim().toLowerCase()) {
+          // Internal Duplicate
+          if (!internal[parsed.currCh]) {
+            internal[parsed.currCh] = [];
+          }
+          if (!internal[parsed.currCh].some(p => p.uid === parsed.uid)) {
+            internal[parsed.currCh].push({ name: parsed.name, server: parsed.server, uid: parsed.uid });
+          }
+        } else {
+          // Cross-Host Duplicate
+          const uid = parsed.uid;
+          playerDetails.set(uid, { name: parsed.name, server: parsed.server, uid: parsed.uid });
+          if (!crossMap.has(uid)) {
+            crossMap.set(uid, new Set());
+          }
+          crossMap.get(uid)!.add(parsed.prevCh);
+          crossMap.get(uid)!.add(parsed.currCh);
+        }
       });
-      report += `\n`;
+
+      // 1. Internal Duplicates output
+      const internalKeys = Object.keys(internal).sort();
+      if (internalKeys.length > 0) {
+        report += `[Internal Duplicates (Registered multiple times in the SAME CH)]\n`;
+        internalKeys.forEach(ch => {
+          report += `- CH ${ch} (${internal[ch].length} player(s)):\n`;
+          internal[ch].forEach(p => {
+            if (p.server) {
+              report += `  * ${p.name} (Server: ${p.server}, UID: ${p.uid})\n`;
+            } else {
+              report += `  * ${p.name}\n`;
+            }
+          });
+        });
+        report += `\n`;
+      }
+
+      // 2. Cross-Host Duplicates output
+      if (crossMap.size > 0) {
+        report += `[Cross-Host Duplicates (Registered across different CHs)]\n`;
+        crossMap.forEach((chs, uid) => {
+          const p = playerDetails.get(uid);
+          if (p) {
+            report += `- ${p.name} (Server: ${p.server}, UID: ${p.uid})\n`;
+            report += `  * Registered in: ${Array.from(chs).sort().join(" & ")}\n`;
+          }
+        });
+        report += `\n`;
+      }
     }
     
     if (autoFixes.length > 0) {
@@ -339,6 +399,18 @@ export default function Dashboard() {
   const confirmRunJob = async () => {
     if (!selectedJob) return;
     const jobId = selectedJob.id;
+    
+    // Guard: Prevent double run triggers if job is already in starting list or actively running
+    if (startingJobs.has(jobId) || runProgress.get(jobId)?.status === "running") {
+      return;
+    }
+
+    setStartingJobs(prev => {
+      const next = new Set(prev);
+      next.add(jobId);
+      return next;
+    });
+
     const jobName = selectedJob.name;
     setRunModalOpen(false);
 
@@ -367,8 +439,14 @@ export default function Dashboard() {
     } catch (error: any) {
       toast(error.message || "Error triggering job", "error");
       stopProgressPoller(jobId);
+    } finally {
+      setStartingJobs(prev => {
+        const next = new Set(prev);
+        next.delete(jobId);
+        return next;
+      });
+      fetchJobs();
     }
-    fetchJobs();
   };
 
   const confirmDeleteJob = async () => {
@@ -382,6 +460,35 @@ export default function Dashboard() {
       toast(`Job "${selectedJob.name}" deleted.`, "info");
     } catch {
       toast("Could not delete the job.", "error");
+    }
+  };
+
+  const handleStopClick = async (job: JoinerJob) => {
+    const jobId = job.id;
+    if (stoppingJobs.has(jobId)) return;
+
+    setStoppingJobs(prev => {
+      const next = new Set(prev);
+      next.add(jobId);
+      return next;
+    });
+
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/stop`, { method: "POST" });
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || "Failed to stop job");
+      }
+      toast(`Stopping "${job.name}"...`, "info");
+    } catch (error: any) {
+      toast(error.message || "Error stopping job", "error");
+    } finally {
+      setStoppingJobs(prev => {
+        const next = new Set(prev);
+        next.delete(jobId);
+        return next;
+      });
+      fetchJobs();
     }
   };
 
@@ -615,9 +722,27 @@ export default function Dashboard() {
                       {/* Action Footer */}
                       <div className="bg-slate-900/60 p-4 px-6 border-t border-slate-700/50 backdrop-blur-md flex justify-between items-center relative z-10 w-full sm:flex-row flex-col-reverse gap-4">
                         <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto overflow-hidden">
-                           <button onClick={() => handleRunClick(job)} className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-[11px] uppercase tracking-widest text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500 hover:text-emerald-950 transition-all shadow-sm" title="Run Job">
-                             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> <span>Run Engine</span>
-                           </button>
+                           {isRunning ? (
+                             <button 
+                               onClick={() => handleStopClick(job)} 
+                               disabled={stoppingJobs.has(job.id)}
+                               className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-[11px] uppercase tracking-widest text-red-400 bg-red-500/10 border border-red-500/20 hover:bg-red-500 hover:text-red-950 transition-all shadow-sm" 
+                               title="Stop Job"
+                             >
+                               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                               <span>{stoppingJobs.has(job.id) ? "Stopping..." : "Stop Engine"}</span>
+                             </button>
+                           ) : (
+                             <button 
+                               onClick={() => handleRunClick(job)} 
+                               disabled={startingJobs.has(job.id)}
+                               className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-[11px] uppercase tracking-widest text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500 hover:text-emerald-950 transition-all shadow-sm ${startingJobs.has(job.id) ? "opacity-50 cursor-not-allowed" : ""}`} 
+                               title="Run Job"
+                             >
+                               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> 
+                               <span>{startingJobs.has(job.id) ? "Starting..." : "Run Engine"}</span>
+                             </button>
+                           )}
                            <Link href={`/jobs/${job.id}/edit`} className="p-2.5 rounded-xl text-slate-400 bg-slate-800 border border-slate-700 hover:text-white hover:bg-slate-700 transition-all shadow-sm" title="Edit Configuration">
                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
                            </Link>

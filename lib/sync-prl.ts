@@ -168,7 +168,17 @@ export async function syncPrl(job: JoinerJob, runId: string) {
   for (let i = 0; i < chEntries.length; i++) {
     const ch = chEntries[i];
     const pct = 5 + Math.floor((i / totalCh) * 15);
-    await updateProgress(pct, `Resolving URL for ${ch.chName}...`);
+    await updateProgress(pct, `Resolving URLs: ${i + 1}/${totalCh} (${ch.chName})`);
+
+    // Check if run was stopped by user
+    const currentRun = await prisma.joinerRun.findUnique({
+      where: { id: runId },
+      select: { status: true }
+    });
+    if (currentRun && currentRun.status === "failed") {
+      console.log(`[PRL] Job run ${runId} was stopped by user. Aborting URL resolution...`);
+      return { rowsWritten: 0, success: false, errors };
+    }
 
     const result = await resolveUrl(ch.url);
     if ("error" in result) {
@@ -185,11 +195,21 @@ export async function syncPrl(job: JoinerJob, runId: string) {
   for (let i = 0; i < resolvedEntries.length; i++) {
     const { chName, spreadsheetId } = resolvedEntries[i];
     const pct = 20 + Math.floor((i / resolvedEntries.length) * 40);
-    await updateProgress(pct, `Reading ${chName}'s PRL sheet...`);
+    await updateProgress(pct, `Reading CHs: ${i + 1}/${resolvedEntries.length} (${chName})`);
 
-    // Rate limiter: Wait 3000ms between CH sheet fetches to avoid 60req/min quota limit
+    // Check if run was stopped by user
+    const currentRun = await prisma.joinerRun.findUnique({
+      where: { id: runId },
+      select: { status: true }
+    });
+    if (currentRun && currentRun.status === "failed") {
+      console.log(`[PRL] Job run ${runId} was stopped by user. Aborting sheet reading...`);
+      return { rowsWritten: 0, success: false, errors };
+    }
+
+    // Rate limiter: Wait 200ms between CH sheet fetches to avoid spamming Sheets API
     if (i > 0) {
-      await new Promise((res) => setTimeout(res, 3000));
+      await new Promise((res) => setTimeout(res, 200));
     }
 
     try {
