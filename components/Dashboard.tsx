@@ -247,7 +247,7 @@ export default function Dashboard() {
     };
 
     const parseDissolvedError = (errStr: string) => {
-      const match = errStr.match(/only (\d+) valid players.*Mode:\s*(.*?),\s*Target:\s*(\d+),\s*Minimum allowed:\s*(\d+)(?:\.\s*\(Teams in responses sheet:\s*(\d+)\))?/i);
+      const match = errStr.match(/only (\d+) valid players.*Mode:\s*(.*?),\s*Target:\s*(\d+),\s*Minimum allowed:\s*(\d+)(?:\.\s*\(Teams in responses sheet:\s*([^)]*)\))?/i);
       if (match) {
         return {
           actual: match[1],
@@ -382,7 +382,7 @@ export default function Dashboard() {
       
       accessibility.forEach(a => {
         report += `❌ ${a.chName.toUpperCase()}\n`;
-        const match = a.error.match(/(.*?)\.\s*\(Teams in responses sheet:\s*(\d+)\)/i);
+        const match = a.error.match(/(.*?)\.\s*\(Teams in responses sheet:\s*([^)]*)\)/i);
         if (match) {
           report += `   ├─ ${match[1]}\n`;
           report += `   └─ Teams in responses sheet : ${match[2]}\n\n`;

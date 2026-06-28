@@ -63,7 +63,7 @@ async function readChEntriesFromReportingSheet(
     return { entries, errors };
   }
 
-  console.log(`[ReportingSheet] Tab: "${sheetName}", Nickname Col Index: ${nicknameCol}, Link Col Index: ${linkCol}, Header Row Index: ${headerRowIdx}`);
+  console.log(`[ReportingSheet] Tab: "${sheetName}", Nickname Col Index: ${nicknameCol}, Link Col Index: ${linkCol}, Response Sheet Col Index: ${responseSheetCol}, Registered Teams Col Index: ${registeredTeamsCol}, Header Row Index: ${headerRowIdx}`);
 
   // Extract entries starting from the row after headers
   for (let i = headerRowIdx + 1; i < rows.length; i++) {
@@ -215,6 +215,9 @@ export async function syncPrl(job: JoinerJob, runId: string) {
   }
 
   const getRegisteredTeamsCount = async (chEntry: any) => {
+    let responseCount: number | null = null;
+    let responseError: string | null = null;
+
     if (chEntry.responseSheetUrl) {
       try {
         const resResult = await resolveUrl(chEntry.responseSheetUrl);
@@ -225,19 +228,45 @@ export async function syncPrl(job: JoinerJob, runId: string) {
             range: "A1:Z100",
           });
           const resRows = resSheet.data.values || [];
-          if (resRows.length > 1) {
-            return resRows.length - 1;
+          if (resRows.length > 0) {
+            responseCount = Math.max(0, resRows.length - 1);
+          } else {
+            responseCount = 0;
           }
+        } else {
+          responseError = "Invalid Link";
         }
-      } catch (e) {
+      } catch (e: any) {
         console.log(`Failed to read response sheet for ${chEntry.chName}:`, e);
+        const msg = e?.message || String(e);
+        if (msg.includes("403") || msg.includes("permission")) {
+          responseError = "Private (Verify Link Sharing)";
+        } else if (msg.includes("404") || msg.includes("not found")) {
+          responseError = "Sheet Not Found";
+        } else {
+          responseError = "Inaccessible";
+        }
       }
     }
+
+    let fallbackCount: number | null = null;
     if (chEntry.registeredTeams) {
       const parsed = parseInt(chEntry.registeredTeams.replace(/\D/g, ""));
-      if (!isNaN(parsed)) return parsed;
+      if (!isNaN(parsed)) {
+        fallbackCount = parsed;
+      }
     }
-    return 0;
+
+    if (responseCount !== null) {
+      return { count: String(responseCount), source: "sheet" };
+    }
+    if (fallbackCount !== null) {
+      return { count: String(fallbackCount), source: "fallback" };
+    }
+    if (responseError) {
+      return { count: responseError, source: "error" };
+    }
+    return { count: "0", source: "none" };
   };
 
   // Step 3: Read each CH's PRL sheet
@@ -288,10 +317,10 @@ export async function syncPrl(job: JoinerJob, runId: string) {
 
       const rows = data.data.values;
       if (!rows || rows.length === 0) {
-        const teamsCount = await getRegisteredTeamsCount(resolvedEntries[i]);
+        const teamsRes = await getRegisteredTeamsCount(resolvedEntries[i]);
         let teamsMessage = "";
-        if (teamsCount > 0) {
-          teamsMessage = `.(Teams in responses sheet: ${teamsCount})`;
+        if (teamsRes.count !== "0" || teamsRes.source === "error") {
+          teamsMessage = `.(Teams in responses sheet: ${teamsRes.count})`;
         }
         errors.push({ chName, error: `Sheet is blank or missing data${teamsMessage}` });
         continue;
@@ -555,22 +584,27 @@ export async function syncPrl(job: JoinerJob, runId: string) {
       const requiredThreshold = Math.max(1, minPlayers - 4); // Allow up to 4 players to have failed/missing entries
 
       if (validRowCount < requiredThreshold) {
-        const teamsCount = await getRegisteredTeamsCount(resolvedEntries[i]);
+        const teamsRes = await getRegisteredTeamsCount(resolvedEntries[i]);
         let teamsMessage = "";
-        if (teamsCount > 0) {
-          teamsMessage = `.(Teams in responses sheet: ${teamsCount})`;
+        if (teamsRes.count !== "0" || teamsRes.source === "error") {
+          teamsMessage = `.(Teams in responses sheet: ${teamsRes.count})`;
         }
         errors.push({ chName, error: `Dissolved Tournament: only ${validRowCount} valid players found (Mode: ${gameModeStr}, Target: ${minPlayers}, Minimum allowed: ${requiredThreshold})${teamsMessage}` });
       }
 
     } catch (error: any) {
       const msg = error?.message || String(error);
+      const teamsRes = await getRegisteredTeamsCount(resolvedEntries[i]);
+      let teamsMessage = "";
+      if (teamsRes.count !== "0" || teamsRes.source === "error") {
+        teamsMessage = `.(Teams in responses sheet: ${teamsRes.count})`;
+      }
       if (msg.includes("403") || msg.includes("not found") || msg.includes("permission")) {
-        errors.push({ chName, error: "Sheet is not publicly accessible (403). CH needs to set sharing to 'Anyone with the link'." });
+        errors.push({ chName, error: `Sheet is not publicly accessible (403). CH needs to set sharing to 'Anyone with the link'.${teamsMessage}` });
       } else if (msg.includes("404")) {
-        errors.push({ chName, error: "Sheet not found (404). The spreadsheet may have been deleted." });
+        errors.push({ chName, error: `Sheet not found (404). The spreadsheet may have been deleted.${teamsMessage}` });
       } else {
-        errors.push({ chName, error: `Error reading sheet: ${msg}` });
+        errors.push({ chName, error: `Error reading sheet: ${msg}${teamsMessage}` });
       }
     }
   }

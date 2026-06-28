@@ -216,12 +216,18 @@ export function detectReportingSheetColumns(
       }
 
       // Response sheet link column
-      if (val.includes("RESPONSE SHEET") || val.includes("RESPONSES") || val.includes("RESPONSE LINK")) {
+      if (val.includes("RESPONSE")) {
         responseSheetCol = c;
       }
 
       // Number of registered teams column
-      if (val.includes("REGISTERED TEAMS") || val.includes("NUMBER OF TEAMS") || val.includes("NO. OF TEAMS") || val.includes("TEAM COUNT")) {
+      if (
+        (val.includes("REGISTERED") && val.includes("TEAM")) ||
+        val.includes("NO. OF TEAMS") ||
+        val.includes("NUMBER OF TEAMS") ||
+        val.includes("TEAM COUNT") ||
+        val.includes("TEAMS REGISTERED")
+      ) {
         registeredTeamsCol = c;
       }
 
