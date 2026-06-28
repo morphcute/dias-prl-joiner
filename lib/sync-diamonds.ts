@@ -4,10 +4,71 @@ import { google } from "googleapis";
 import { getUserAuth } from "./google";
 import { resolveUrl, ResolveResult } from "./url-resolver";
 import { verifyMlbbId } from "./mlbb";
+import { isFormulaOrError, adjustColumnsBasedOnData, detectReportingSheetColumns } from "./validations";
 
 interface ChError {
   chName: string;
   error: string;
+  type?: string;
+}
+
+async function readChEntriesFromReportingSheet(
+  sheets: any,
+  spreadsheetId: string,
+  sheetName: string,
+  type: "prl" | "diamonds"
+): Promise<{ entries: { chName: string; url: string }[]; errors: ChError[] }> {
+  const entries: { chName: string; url: string }[] = [];
+  const errors: ChError[] = [];
+
+  const result = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${sheetName}'!A1:AZ`,
+  });
+
+  const rows = result.data.values || [];
+  if (rows.length === 0) {
+    errors.push({ chName: "Reporting Sheet", error: "Reporting sheet is blank", type: "accessibility" });
+    return { entries, errors };
+  }
+
+  const { nicknameCol, linkCol, headerRowIdx } = detectReportingSheetColumns(rows, type);
+
+  if (nicknameCol === -1 || linkCol === -1) {
+    const missing = nicknameCol === -1 ? (linkCol === -1 ? "CH Nickname and Link" : "CH Nickname") : "Link";
+    errors.push({
+      chName: "Reporting Sheet",
+      error: `Could not find column for ${missing} in headers. Checked first 10 rows.`,
+      type: "accessibility"
+    });
+    return { entries, errors };
+  }
+
+  console.log(`[ReportingSheet] Tab: "${sheetName}", Nickname Col Index: ${nicknameCol}, Link Col Index: ${linkCol}, Header Row Index: ${headerRowIdx}`);
+
+  for (let i = headerRowIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    const chNickname = String(row[nicknameCol] ?? "").trim();
+    const link = String(row[linkCol] ?? "").trim();
+
+    if (!chNickname) continue;
+
+    if (
+      !link ||
+      link.toUpperCase() === "DISSOLVED" ||
+      link.toUpperCase().includes("NO EVENT") ||
+      link.toUpperCase() === "EVENT" ||
+      (!link.startsWith("http") && !link.startsWith("www"))
+    ) {
+      continue;
+    }
+
+    entries.push({ chName: chNickname, url: link });
+  }
+
+  console.log(`[ReportingSheet] Found ${entries.length} valid CH entries with links dynamically`);
+
+  return { entries, errors };
 }
 
 export async function syncDiamonds(job: JoinerJob, runId: string) {
@@ -62,51 +123,17 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
     reportingTabName = reportingSpreadsheet.data.sheets?.[0]?.properties?.title || "Sheet1";
   }
 
-  // Determine target columns based on Game Mode (Special = 1v1, 2v2, 3v3)
-  const gameModeStr = (job as any).gameMode || "";
-  const isSpecial = ["1v1", "2v2", "3v3"].includes(gameModeStr);
-  const isOnsite = gameModeStr === "Onsite 5v5";
-  const diamondCol = isOnsite ? "S" : isSpecial ? "O" : "M";
+  console.log(`[Diamonds] Tab: "${reportingTabName}", Mode: ${(job as any).gameMode || "5v5"}`);
 
-  // Read CH entries using batchGet: Column D = CH Nickname, Column M/O = Diamond Winners Sheet link
-  const batchResult = await sheets.spreadsheets.values.batchGet({
-    spreadsheetId: (job as any).spreadsheetId,
-    ranges: [
-      `'${reportingTabName}'!D4:D`,   // CH Nicknames
-      `'${reportingTabName}'!${diamondCol}4:${diamondCol}`,   // Diamond Winners Sheet links
-    ],
-  });
+  const { entries: chEntries, errors: reportingErrors } = await readChEntriesFromReportingSheet(
+    sheets, (job as any).spreadsheetId, reportingTabName, "diamonds"
+  );
 
-  const nicknameRows = batchResult.data.valueRanges?.[0]?.values || [];
-  const linkRows = batchResult.data.valueRanges?.[1]?.values || [];
-
-  console.log(`[Diamonds] Tab: "${reportingTabName}", Mode: ${isSpecial ? "Special" : "5v5"}, Diamond links (col ${diamondCol}): ${linkRows.length} rows`);
-
-  const chEntries: { chName: string; url: string }[] = [];
-  const maxLen = Math.max(nicknameRows.length, linkRows.length);
-
-  for (let i = 0; i < maxLen; i++) {
-    const chNickname = String(nicknameRows[i]?.[0] ?? "").trim();
-    const diamondLink = String(linkRows[i]?.[0] ?? "").trim();
-
-    if (!chNickname) continue;
-    if (
-      !diamondLink ||
-      diamondLink.toUpperCase() === "DISSOLVED" ||
-      diamondLink.toUpperCase().includes("NO EVENT") ||
-      diamondLink.toUpperCase() === "EVENT" ||
-      (!diamondLink.startsWith("http") && !diamondLink.startsWith("www"))
-    ) {
-      continue;
-    }
-
-    chEntries.push({ chName: chNickname, url: diamondLink });
+  if (reportingErrors && reportingErrors.length > 0) {
+    errors.push(...reportingErrors);
   }
 
-  console.log(`[Diamonds] Found ${chEntries.length} valid CH entries with Diamond links`);
-
   if (chEntries.length === 0) {
-    errors.push({ chName: "Reporting Sheet", error: "No CH entries with Diamond sheet links found in column M" });
     await prisma.joinerRun.update({
       where: { id: runId },
       data: { errors: JSON.stringify(errors) },
@@ -208,8 +235,27 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
       }
 
       if (headerRowIdx === -1 || nameCol === -1) {
-        errors.push({ chName, error: "Could not find header row with NAME/SERVER/UID columns" });
+        errors.push({ chName, error: "Could not find header row with NAME/SERVER/UID columns", type: "accessibility" });
         continue;
+      }
+
+      // Run dynamic column correction based on data analysis
+      const adjusted = adjustColumnsBasedOnData(rows, headerRowIdx, {
+        nameCol,
+        ignCol: -1, // No IGN column in diamonds sheet normally
+        serverCol,
+        uidCol
+      });
+
+      if (adjusted.corrected) {
+        nameCol = adjusted.nameCol;
+        serverCol = adjusted.serverCol;
+        uidCol = adjusted.uidCol;
+        errors.push({
+          chName,
+          error: "Auto-corrected column mapping: columns were misaligned in headers",
+          type: "validation_fixed"
+        });
       }
 
       let chHeaderAdded = false;
@@ -226,6 +272,12 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
         const remarks = remarksCol !== -1 ? String(row[remarksCol] ?? "").trim() : "";
 
         if (!name && !uid) continue;
+
+        // Skip formula placeholder rows and spreadsheet errors
+        if (isFormulaOrError(name) || isFormulaOrError(server) || isFormulaOrError(uid)) {
+          continue;
+        }
+
         if (name.toUpperCase() === "TOTAL" || name.toUpperCase() === "TOTALS") continue;
 
         if (!remarks.toUpperCase().includes("CH HANDLER")) {

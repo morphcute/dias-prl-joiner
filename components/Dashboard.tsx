@@ -11,6 +11,7 @@ import { toast, ToastProvider } from "./Toast";
 interface ChError {
   chName: string;
   error: string;
+  type?: string;
 }
 
 interface JoinerRun {
@@ -60,6 +61,8 @@ export default function Dashboard() {
   const [viewErrors, setViewErrors] = useState<ChError[]>([]);
   const [viewStats, setViewStats] = useState<{ chName: string; count: number }[]>([]);
   const [statsModalOpen, setStatsModalOpen] = useState(false);
+  const [activeLogTab, setActiveLogTab] = useState<"overview" | "chHealth" | "duplicates" | "logs">("overview");
+  const [modalSearch, setModalSearch] = useState("");
 
   const getDisplayStatus = (job: JoinerJob): string | undefined => {
     const live = runProgress.get(job.id);
@@ -180,7 +183,12 @@ export default function Dashboard() {
     if (!run) return;
     const errs = typeof run.errors === "string" ? JSON.parse(run.errors) : run.errors;
     setViewErrors(errs || []);
+    const statsStr = (run as any).chStats;
+    const stats = typeof statsStr === "string" ? JSON.parse(statsStr) : statsStr || [];
+    setViewStats(stats || []);
     setSelectedJob(job);
+    setActiveLogTab("logs");
+    setModalSearch("");
     setErrorsModalOpen(true);
   };
 
@@ -189,8 +197,134 @@ export default function Dashboard() {
     if (!run) return;
     const statsStr = (run as any).chStats;
     const stats = typeof statsStr === "string" ? JSON.parse(statsStr) : statsStr || [];
-    setViewStats(stats);
-    setStatsModalOpen(true);
+    setViewStats(stats || []);
+    const errs = typeof run.errors === "string" ? JSON.parse(run.errors) : run.errors;
+    setViewErrors(errs || []);
+    setSelectedJob(job);
+    setActiveLogTab("overview");
+    setModalSearch("");
+    setErrorsModalOpen(true);
+  };
+
+  const getErrorType = (err: ChError): "duplicate" | "dissolved" | "accessibility" | "validation_fixed" | "validation_error" => {
+    if (err.type) return err.type as any;
+    const msg = err.error.toLowerCase();
+    if (msg.includes("duplicate")) return "duplicate";
+    if (msg.includes("dissolved") || msg.includes("empty tournament")) return "dissolved";
+    if (msg.includes("403") || msg.includes("404") || msg.includes("permission") || msg.includes("not found") || msg.includes("error reading sheet")) return "accessibility";
+    if (msg.includes("auto-fixed") || msg.includes("mixed") || msg.includes("negative") || msg.includes("swapped") || msg.includes("auto-corrected")) return "validation_fixed";
+    return "validation_error";
+  };
+
+  const copyTextReport = () => {
+    if (!selectedJob) return;
+    const run = selectedJob.runs?.[0];
+    if (!run) return;
+    
+    const totalPlayers = viewStats.reduce((sum, s) => sum + s.count, 0);
+    const duplicates = viewErrors.filter(err => getErrorType(err) === "duplicate");
+    const criticals = viewErrors.filter(err => getErrorType(err) === "accessibility" || getErrorType(err) === "dissolved");
+    const autoFixes = viewErrors.filter(err => getErrorType(err) === "validation_fixed");
+    const validationErrors = viewErrors.filter(err => getErrorType(err) === "validation_error");
+    
+    let report = `=== OPERATION SUMMARY REPORT: ${selectedJob.name} ===\n`;
+    report += `Run ID: ${run.id}\n`;
+    report += `Type: ${selectedJob.type === "diamonds" ? "Diamond Rewards" : "PRL Pipeline"}\n`;
+    report += `Date: ${new Date(run.startedAt).toLocaleString()}\n`;
+    report += `Status: ${run.status.toUpperCase()}\n`;
+    report += `Rows Written: ${run.rowsWritten}\n\n`;
+    
+    report += `--- METRICS ---\n`;
+    report += `- Compiled CHs: ${viewStats.length}\n`;
+    report += `- Total Active Players/Winners: ${totalPlayers}\n`;
+    report += `- Critical Failures (Inaccessible/Dissolved): ${criticals.length}\n`;
+    report += `- Duplicate Entries: ${duplicates.length}\n`;
+    report += `- Auto-Fixes Applied: ${autoFixes.length}\n`;
+    report += `- Unfixed Validation Errors: ${validationErrors.length}\n\n`;
+    
+    if (criticals.length > 0) {
+      report += `--- CRITICAL FAULTS ---\n`;
+      criticals.forEach(c => {
+        report += `[${c.chName}] ${c.error}\n`;
+      });
+      report += `\n`;
+    }
+    
+    if (duplicates.length > 0) {
+      report += `--- DUPLICATES REPORT ---\n`;
+      duplicates.forEach(d => {
+        report += `[${d.chName}] ${d.error}\n`;
+      });
+      report += `\n`;
+    }
+    
+    if (autoFixes.length > 0) {
+      report += `--- AUTO-FIXES APPLIED ---\n`;
+      autoFixes.forEach(f => {
+        report += `[${f.chName}] ${f.error}\n`;
+      });
+      report += `\n`;
+    }
+
+    if (validationErrors.length > 0) {
+      report += `--- UNFIXED VALIDATION ERRORS ---\n`;
+      validationErrors.forEach(v => {
+        report += `[${v.chName}] ${v.error}\n`;
+      });
+      report += `\n`;
+    }
+    
+    navigator.clipboard.writeText(report);
+    toast("Summary report copied to clipboard!", "success");
+  };
+
+  const exportReportToCSV = () => {
+    if (!selectedJob) return;
+    const run = selectedJob.runs?.[0];
+    if (!run) return;
+    
+    let csvContent = "data:text/csv;charset=utf-8,";
+    csvContent += "CH Name,Error/Log Message,Type\n";
+    
+    viewErrors.forEach(err => {
+      const type = getErrorType(err);
+      const escapedMsg = err.error.replace(/"/g, '""');
+      csvContent += `"${err.chName}","${escapedMsg}","${type}"\n`;
+    });
+    
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Operation_Report_${selectedJob.name.replace(/\s+/g, "_")}_${run.id.substring(0,6)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const parseDuplicateError = (err: ChError) => {
+    const regex = /(?:Duplicate player entry found|Duplicate winner found):\s*(.*?)\s*\(Server:\s*(\d*),\s*UID:\s*(\d*)\)\s*was\s*already\s*registered\s*in\s*CH\s*(.*)/i;
+    const match = err.error.match(regex);
+    if (match) {
+      return {
+        name: match[1],
+        server: match[2],
+        uid: match[3],
+        prevCh: match[4],
+        currCh: err.chName
+      };
+    }
+    return null;
+  };
+
+  const getChList = () => {
+    const chNames = new Set<string>();
+    viewStats.forEach(s => chNames.add(s.chName));
+    viewErrors.forEach(e => {
+      if (e.chName !== "Reporting Sheet") {
+        chNames.add(e.chName);
+      }
+    });
+    return Array.from(chNames).sort();
   };
 
   const getErrorCount = (job: JoinerJob): number => {
@@ -548,95 +682,332 @@ export default function Dashboard() {
         <Modal
           isOpen={errorsModalOpen}
           onClose={() => setErrorsModalOpen(false)}
-          title="Operation Fault Log"
-          maxWidth="max-w-3xl"
+          title={`Operation Audit: ${selectedJob?.name || ""}`}
+          maxWidth="max-w-4xl"
           footer={
-            <div className="flex justify-end w-full">
-              <button onClick={() => setErrorsModalOpen(false)} className="px-5 py-2.5 rounded-xl font-semibold bg-white/5 text-white/80 hover:bg-white/10 transition-colors">Acknowledge</button>
+            <div className="flex flex-col sm:flex-row justify-between items-center w-full gap-4">
+              <div className="flex gap-2 w-full sm:w-auto">
+                <button 
+                  onClick={copyTextReport} 
+                  className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 hover:bg-indigo-500 hover:text-white transition-all text-xs"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>
+                  Copy Summary
+                </button>
+                <button 
+                  onClick={exportReportToCSV} 
+                  className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500 hover:text-emerald-950 transition-all text-xs"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                  Export CSV
+                </button>
+              </div>
+              <button onClick={() => setErrorsModalOpen(false)} className="w-full sm:w-auto px-5 py-2.5 rounded-xl font-semibold bg-white/5 text-white/80 hover:bg-white/10 transition-colors text-xs">Close</button>
             </div>
           }
         >
-          <div className="space-y-6 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
-            {viewErrors.length === 0 ? (
-              <p className="text-white/40 text-sm">All nodes operating nominally.</p>
-            ) : (
-              (() => {
-                const playerFaults = viewErrors.filter(err => 
-                  err.error.toLowerCase().includes("duplicate")
-                );
-                const systemFaults = viewErrors.filter(err => 
-                  !err.error.toLowerCase().includes("duplicate")
-                );
+          {/* Tab Navigation */}
+          <div className="flex border-b border-slate-800 mb-6 overflow-x-auto scrollbar-none shrink-0 gap-1 pb-px">
+            <button 
+              onClick={() => setActiveLogTab("overview")} 
+              className={`px-4 py-3 text-xs uppercase tracking-wider font-extrabold border-b-2 transition-all whitespace-nowrap ${activeLogTab === "overview" ? "border-indigo-500 text-indigo-400" : "border-transparent text-slate-400 hover:text-white"}`}
+            >
+              Overview
+            </button>
+            <button 
+              onClick={() => setActiveLogTab("chHealth")} 
+              className={`px-4 py-3 text-xs uppercase tracking-wider font-extrabold border-b-2 transition-all whitespace-nowrap ${activeLogTab === "chHealth" ? "border-indigo-500 text-indigo-400" : "border-transparent text-slate-400 hover:text-white"}`}
+            >
+              CH Health & Stats
+            </button>
+            <button 
+              onClick={() => setActiveLogTab("duplicates")} 
+              className={`px-4 py-3 text-xs uppercase tracking-wider font-extrabold border-b-2 transition-all whitespace-nowrap ${activeLogTab === "duplicates" ? "border-indigo-500 text-indigo-400" : "border-transparent text-slate-400 hover:text-white"}`}
+            >
+              Duplicates ({viewErrors.filter(err => getErrorType(err) === "duplicate").length})
+            </button>
+            <button 
+              onClick={() => setActiveLogTab("logs")} 
+              className={`px-4 py-3 text-xs uppercase tracking-wider font-extrabold border-b-2 transition-all whitespace-nowrap ${activeLogTab === "logs" ? "border-indigo-500 text-indigo-400" : "border-transparent text-slate-400 hover:text-white"}`}
+            >
+              Raw Logs ({viewErrors.length})
+            </button>
+          </div>
 
-                return (
-                  <>
-                    {playerFaults.length > 0 && (
-                      <div className="space-y-3 max-w-full">
-                        <h4 className="text-amber-500 font-bold text-xs uppercase tracking-widest flex items-center gap-2 mb-2">
-                           <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" /> Player Faults ({playerFaults.length})
-                        </h4>
-                        {playerFaults.map((err, i) => (
-                          <div key={`p-${i}`} className="p-4 rounded-xl bg-[#1A1111] border border-amber-500/20 relative overflow-hidden flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-6">
-                            <div className="absolute left-0 top-0 bottom-0 w-1 bg-amber-500/50" />
-                            <div className="text-sm font-bold text-white tracking-wide shrink-0">{err.chName}</div>
-                            <div className="text-xs text-amber-300/80 leading-relaxed font-mono sm:text-right break-words">{err.error}</div>
+          <div className="space-y-6 max-h-[50vh] overflow-y-auto pr-2 custom-scrollbar min-h-[300px]">
+            {activeLogTab === "overview" && (() => {
+              const totalPlayers = viewStats.reduce((sum, s) => sum + s.count, 0);
+              const duplicatesCount = viewErrors.filter(err => getErrorType(err) === "duplicate").length;
+              const criticalCount = viewErrors.filter(err => getErrorType(err) === "accessibility" || getErrorType(err) === "dissolved").length;
+              const autoFixesCount = viewErrors.filter(err => getErrorType(err) === "validation_fixed").length;
+
+              return (
+                <div className="space-y-6">
+                  {/* Metric Cards Grid */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-slate-800/40 border border-slate-700/50 p-4 rounded-2xl flex flex-col justify-between">
+                      <span className="text-[10px] uppercase font-black tracking-wider text-slate-400">Total Players</span>
+                      <span className="text-2xl font-black text-white mt-1">{totalPlayers}</span>
+                    </div>
+                    <div className="bg-red-500/5 border border-red-500/20 p-4 rounded-2xl flex flex-col justify-between">
+                      <span className="text-[10px] uppercase font-black tracking-wider text-red-400">Critical Failures</span>
+                      <span className="text-2xl font-black text-red-400 mt-1">{criticalCount}</span>
+                    </div>
+                    <div className="bg-amber-500/5 border border-amber-500/20 p-4 rounded-2xl flex flex-col justify-between">
+                      <span className="text-[10px] uppercase font-black tracking-wider text-amber-400">Duplicates</span>
+                      <span className="text-2xl font-black text-amber-400 mt-1">{duplicatesCount}</span>
+                    </div>
+                    <div className="bg-blue-500/5 border border-blue-500/20 p-4 rounded-2xl flex flex-col justify-between">
+                      <span className="text-[10px] uppercase font-black tracking-wider text-blue-400">Auto-Fixes Applied</span>
+                      <span className="text-2xl font-black text-blue-400 mt-1">{autoFixesCount}</span>
+                    </div>
+                  </div>
+
+                  {/* Health Status Banner */}
+                  {criticalCount > 0 ? (
+                    <div className="p-4 rounded-2xl bg-red-500/10 border border-red-500/20 flex gap-3 items-start">
+                      <span className="text-red-400 mt-0.5 shrink-0">⚠️</span>
+                      <div>
+                        <h4 className="text-sm font-bold text-red-400 uppercase tracking-wider">Action Required: Critical Faults Detected</h4>
+                        <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                          There are {criticalCount} critical issues preventing successful data compilation for some Community Hosts. Most commonly, this is due to sheets not being set to "Anyone with the link can view". Check the "CH Health" tab to locate the affected hosts.
+                        </p>
+                      </div>
+                    </div>
+                  ) : duplicatesCount > 0 ? (
+                    <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex gap-3 items-start">
+                      <span className="text-amber-400 mt-0.5 shrink-0">⚠️</span>
+                      <div>
+                        <h4 className="text-sm font-bold text-amber-400 uppercase tracking-wider">Nominal Execution with Warnings</h4>
+                        <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                          Data compiled successfully, but duplicates were detected. Players who registered under multiple hosts are highlighted in the "Duplicates" tab and highlighted in pink on the output spreadsheet.
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex gap-3 items-start">
+                      <span className="text-emerald-400 mt-0.5 shrink-0">✅</span>
+                      <div>
+                        <h4 className="text-sm font-bold text-emerald-400 uppercase tracking-wider">System Healthy & Nominal</h4>
+                        <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                          All spreadsheet data was compiled nominally! No critical failures or duplicate entries were found. All target sheets were successfully synchronized and formatted.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Quick Alerts */}
+                  {viewErrors.filter(err => getErrorType(err) === "accessibility").length > 0 && (
+                    <div className="space-y-2">
+                      <h3 className="text-xs uppercase font-extrabold tracking-wider text-slate-400">Inaccessible / Broken Sheets</h3>
+                      <div className="grid grid-cols-1 gap-2">
+                        {viewErrors.filter(err => getErrorType(err) === "accessibility").map((err, i) => (
+                          <div key={i} className="flex justify-between items-center p-3 rounded-xl bg-slate-800/20 border border-slate-700/50 text-xs">
+                            <span className="font-extrabold text-white">{err.chName}</span>
+                            <span className="text-red-400 text-[11px] font-mono">{err.error}</span>
                           </div>
                         ))}
                       </div>
-                    )}
-                    
-                    {systemFaults.length > 0 && (
-                       <div className="space-y-3 max-w-full">
-                         <h4 className="text-red-500 font-bold text-xs uppercase tracking-widest flex items-center gap-2 mb-2 mt-4">
-                           <span className="w-1.5 h-1.5 rounded-full bg-red-500" /> System Faults ({systemFaults.length})
-                         </h4>
-                         {systemFaults.map((err, i) => (
-                           <div key={`s-${i}`} className="p-4 rounded-xl bg-[#1A1111] border border-red-500/20 relative overflow-hidden flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-6">
-                             <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-500/50" />
-                             <div className="text-sm font-bold text-white tracking-wide shrink-0">{err.chName}</div>
-                             <div className="text-xs text-red-300/80 leading-relaxed font-mono sm:text-right break-words">{err.error}</div>
-                           </div>
-                         ))}
-                       </div>
-                    )}
-                  </>
-                );
-              })()
-            )}
-          </div>
-          <p className="text-[10px] text-white/20 mt-4 uppercase tracking-widest font-mono">
-            Check Node Access Clearance. "Anyone with link" required.
-          </p>
-        </Modal>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
-        <Modal
-          isOpen={statsModalOpen}
-          onClose={() => setStatsModalOpen(false)}
-          title="Compilation Report"
-          footer={
-            <div className="flex justify-end w-full">
-              <button 
-                onClick={() => setStatsModalOpen(false)} 
-                className="px-5 py-2.5 rounded-xl font-semibold bg-white/5 text-white/80 hover:bg-white/10 transition-colors"
-              >
-                Close
-              </button>
-            </div>
-          }
-        >
-          <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
-            {viewStats.length === 0 ? (
-              <p className="text-white/40 text-sm">No statistics available.</p>
-            ) : (
-              <div className="space-y-2">
-                {viewStats.map((stat, i) => (
-                  <div key={i} className="bg-white/5 border border-white/10 p-4 rounded-xl flex justify-between items-center group hover:bg-white/10 transition-colors">
-                    <span className="font-bold text-white tracking-wide">{stat.chName}</span>
-                    <span className="text-xs px-2.5 py-1 rounded-md bg-white/5 border border-white/10 font-mono text-white/60 tracking-widest uppercase">
-                      {stat.count} {stat.count === 1 ? 'Team/Player' : 'Teams/Players'}
-                    </span>
+            {activeLogTab === "chHealth" && (
+              <div className="space-y-4">
+                <div className="relative mb-2">
+                  <input 
+                    type="text" 
+                    placeholder="Filter Community Hosts..."
+                    value={modalSearch}
+                    onChange={(e) => setModalSearch(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-4 text-xs text-slate-55 focus:outline-none focus:border-indigo-500/50 transition-all placeholder:text-slate-600 shadow-inner"
+                  />
+                  <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                </div>
+                
+                <div className="border border-slate-800/80 rounded-2xl overflow-hidden bg-slate-950/20">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-900/60 border-b border-slate-800 text-[10px] uppercase font-black tracking-wider text-slate-400">
+                        <th className="p-4">CH Nickname</th>
+                        <th className="p-4 text-center">Status</th>
+                        <th className="p-4 text-center">Registered Players</th>
+                        <th className="p-4">Issues Details</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/50">
+                      {getChList()
+                        .filter(name => name.toLowerCase().includes(modalSearch.toLowerCase()))
+                        .map((name, i) => {
+                          const count = viewStats.find(s => s.chName === name)?.count ?? 0;
+                          const chErrs = viewErrors.filter(e => e.chName === name);
+                          
+                          let statusBadge = (
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                              <span className="w-1 h-1 rounded-full bg-emerald-500" /> Nominal
+                            </span>
+                          );
+
+                          const hasCritical = chErrs.some(e => ["accessibility", "dissolved"].includes(getErrorType(e)));
+                          const hasDup = chErrs.some(e => getErrorType(e) === "duplicate");
+                          const hasWarning = chErrs.some(e => ["validation_fixed", "validation_error"].includes(getErrorType(e)));
+
+                          if (hasCritical) {
+                            statusBadge = (
+                              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-black bg-red-500/10 text-red-400 border border-red-500/20">
+                                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" /> Critical
+                              </span>
+                            );
+                          } else if (hasDup) {
+                            statusBadge = (
+                              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-black bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                <span className="w-1 h-1 rounded-full bg-amber-500" /> Duplicate
+                              </span>
+                            );
+                          } else if (hasWarning) {
+                            statusBadge = (
+                              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-black bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                                <span className="w-1 h-1 rounded-full bg-blue-500" /> Warnings
+                              </span>
+                            );
+                          }
+
+                          return (
+                            <tr key={i} className="hover:bg-white/[0.01] transition-colors">
+                              <td className="p-4 font-extrabold text-white">{name}</td>
+                              <td className="p-4 text-center">{statusBadge}</td>
+                              <td className="p-4 text-center font-mono font-bold text-slate-300">{count}</td>
+                              <td className="p-4">
+                                {chErrs.length === 0 ? (
+                                  <span className="text-slate-500 italic">None</span>
+                                ) : (
+                                  <div className="space-y-1 max-w-md">
+                                    {chErrs.map((e, idx) => {
+                                      const type = getErrorType(e);
+                                      const colorClass = 
+                                        type === "accessibility" || type === "dissolved" ? "text-red-400/80" :
+                                        type === "duplicate" ? "text-amber-400/80" :
+                                        type === "validation_fixed" ? "text-blue-400/80" : "text-slate-300";
+                                      return (
+                                        <div key={idx} className={`text-[11px] leading-relaxed font-mono ${colorClass} break-words`}>
+                                          • {e.error}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {activeLogTab === "duplicates" && (
+              <div className="space-y-4">
+                {viewErrors.filter(err => getErrorType(err) === "duplicate").length === 0 ? (
+                  <div className="text-center py-12 text-slate-500 text-xs">
+                    <span className="text-2xl block mb-2">🎉</span>
+                    No duplicate entries detected in this compilation.
                   </div>
-                ))}
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {viewErrors
+                      .filter(err => getErrorType(err) === "duplicate")
+                      .map((err, i) => {
+                        const parsed = parseDuplicateError(err);
+                        if (!parsed) {
+                          return (
+                            <div key={i} className="p-4 rounded-2xl bg-amber-500/5 border border-amber-500/20 text-xs">
+                              <div className="font-extrabold text-white mb-2">{err.chName}</div>
+                              <div className="font-mono text-amber-300/80 leading-relaxed">{err.error}</div>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <div key={i} className="p-4 rounded-2xl bg-[#131722] border border-amber-500/10 hover:border-amber-500/25 transition-all flex flex-col justify-between relative overflow-hidden">
+                            <div className="absolute left-0 top-0 bottom-0 w-1 bg-amber-500/50" />
+                            <div>
+                              <div className="flex justify-between items-start gap-4">
+                                <h4 className="font-black text-sm text-white tracking-wide">{parsed.name}</h4>
+                                <span className="text-[9px] uppercase font-bold tracking-widest font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
+                                  MLBB PLAYER
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-slate-400 font-mono mt-1">
+                                Server: <span className="text-slate-300 font-bold mr-3">{parsed.server}</span> 
+                                UID: <span className="text-slate-300 font-bold">{parsed.uid}</span>
+                              </div>
+                            </div>
+                            
+                            <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs">
+                              <div className="flex flex-col">
+                                <span className="text-[9px] uppercase font-bold text-slate-500 tracking-wider">Originally In</span>
+                                <span className="font-extrabold text-indigo-400">{parsed.prevCh}</span>
+                              </div>
+                              <div className="text-slate-500 shrink-0 font-bold px-2">➡️</div>
+                              <div className="flex flex-col items-end">
+                                <span className="text-[9px] uppercase font-bold text-slate-500 tracking-wider">Duplicate In</span>
+                                <span className="font-extrabold text-amber-400">{parsed.currCh}</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeLogTab === "logs" && (
+              <div className="space-y-4">
+                <div className="relative mb-2">
+                  <input 
+                    type="text" 
+                    placeholder="Search logs by CH or Error message..."
+                    value={modalSearch}
+                    onChange={(e) => setModalSearch(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-4 text-xs text-slate-50 focus:outline-none focus:border-indigo-500/50 transition-all placeholder:text-slate-600 shadow-inner"
+                  />
+                  <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                </div>
+
+                <div className="space-y-2">
+                  {viewErrors.length === 0 ? (
+                    <p className="text-slate-500 italic text-center py-12 text-xs">All nodes operating nominally.</p>
+                  ) : (
+                    viewErrors
+                      .filter(err => err.chName.toLowerCase().includes(modalSearch.toLowerCase()) || err.error.toLowerCase().includes(modalSearch.toLowerCase()))
+                      .map((err, i) => {
+                        const type = getErrorType(err);
+                        const borderClass = 
+                          type === "accessibility" || type === "dissolved" ? "border-red-500/20 bg-[#1e1414]/30 text-red-300" :
+                          type === "duplicate" ? "border-amber-500/20 bg-[#1e1a14]/30 text-amber-300" :
+                          type === "validation_fixed" ? "border-blue-500/20 bg-[#14181e]/30 text-blue-300" :
+                          "border-slate-800 bg-[#161922]/30 text-slate-300";
+
+                        const accentColor = 
+                          type === "accessibility" || type === "dissolved" ? "bg-red-500/50" :
+                          type === "duplicate" ? "bg-amber-500/50" :
+                          type === "validation_fixed" ? "bg-blue-500/50" :
+                          "bg-slate-600";
+
+                        return (
+                          <div key={i} className={`p-4 rounded-xl border relative overflow-hidden flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-6 ${borderClass}`}>
+                            <div className={`absolute left-0 top-0 bottom-0 w-1 ${accentColor}`} />
+                            <div className="text-sm font-black text-white shrink-0 tracking-wide">{err.chName}</div>
+                            <div className="text-xs leading-relaxed font-mono sm:text-right break-words">{err.error}</div>
+                          </div>
+                        );
+                      })
+                  )}
+                </div>
               </div>
             )}
           </div>

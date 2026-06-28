@@ -240,17 +240,23 @@ export function JobForm({ editJobId }: JobFormProps) {
                 className="input-field font-mono !text-xs !py-4"
                 placeholder="https://docs.google.com/spreadsheets/d/.../edit?gid=..."
               />
-              <div className="flex items-start gap-3 p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/20 mt-3">
-                <svg className="w-5 h-5 text-indigo-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                <div className="text-xs text-indigo-300/80 leading-relaxed font-medium">
-                  <strong className="text-indigo-300">Paste the full URL</strong> including the <code className="text-indigo-200 bg-indigo-500/20 px-1.5 py-0.5 rounded ml-1 mr-1">?gid=...</code> tab ID.
-                  <div className="mt-2 text-indigo-300/60 font-normal">
-                    The app will read <strong>Column D</strong> (CH Nickname) and <strong>Column {
-                      type === "diamonds" 
-                        ? (gameMode === "Onsite 5v5" ? "S" : ["1v1", "2v2", "3v3"].includes(gameMode) ? "O" : "M") 
-                        : (gameMode === "Onsite 5v5" ? "N" : ["1v1", "2v2", "3v3"].includes(gameMode) ? "J" : "H")
-                    }</strong> ({type === "diamonds" ? "Diamond Winners Sheet" : "PRL"} links) starting from <strong>row 4</strong>.
+              <div className="flex flex-col gap-3 p-5 rounded-2xl bg-indigo-500/10 border border-indigo-500/25 mt-3 space-y-2">
+                <div className="flex items-start gap-3">
+                  <svg className="w-5 h-5 text-indigo-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  <div className="text-xs text-indigo-300 font-bold">
+                    Paste the full URL including the <code className="text-indigo-200 bg-indigo-500/25 px-1.5 py-0.5 rounded">?gid=...</code> tab ID.
                   </div>
+                </div>
+                <div className="text-xs text-indigo-300/80 leading-relaxed space-y-1 bg-slate-900/50 p-3.5 rounded-xl border border-indigo-500/10">
+                  <p>✨ <strong className="text-white">Smart Column Detection Enabled:</strong> The app will automatically scan the first 10 rows of your sheet to find the correct columns dynamically.</p>
+                  <p className="mt-1.5 text-indigo-300/70">Ensure your sheet contains headers resembling:</p>
+                  <ul className="list-disc pl-4 mt-1 space-y-1 font-mono text-[10px] text-slate-300">
+                    <li><strong className="text-indigo-200">CH Nickname</strong> (e.g. "CH Nickname" or "Nickname")</li>
+                    <li><strong className="text-indigo-200">{type === "diamonds" ? "Diamond Winners Sheet" : "Pre Registered List Link"}</strong> (e.g. "{type === "diamonds" ? "Diamond Winners Sheet" : "Pre Registered List Link"}" or "{type === "diamonds" ? "Diamond Winners" : "PRL"}")</li>
+                  </ul>
+                  <p className="mt-2 text-red-400/90 text-[10px] font-semibold flex items-center gap-1">
+                    ⚠️ Ensure the sheet is shared as "Anyone with the link can view".
+                  </p>
                 </div>
               </div>
             </div>
