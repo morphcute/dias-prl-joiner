@@ -229,6 +229,9 @@ export default function Dashboard() {
     const autoFixes = viewErrors.filter(err => getErrorType(err) === "validation_fixed");
     const validationErrors = viewErrors.filter(err => getErrorType(err) === "validation_error");
     
+    const dissolved = criticals.filter(c => getErrorType(c) === "dissolved");
+    const accessibility = criticals.filter(c => getErrorType(c) === "accessibility");
+
     let report = `=== OPERATION SUMMARY REPORT: ${selectedJob.name} ===\n`;
     report += `Run ID: ${run.id}\n`;
     report += `Type: ${selectedJob.type === "diamonds" ? "Diamond Rewards" : "PRL Pipeline"}\n`;
@@ -244,10 +247,18 @@ export default function Dashboard() {
     report += `- Auto-Fixes Applied: ${autoFixes.length}\n`;
     report += `- Unfixed Validation Errors: ${validationErrors.length}\n\n`;
     
-    if (criticals.length > 0) {
-      report += `--- CRITICAL FAULTS ---\n`;
-      criticals.forEach(c => {
-        report += `[${c.chName}] ${c.error}\n`;
+    if (dissolved.length > 0) {
+      report += `--- DISSOLVED TOURNAMENTS REPORT ---\n`;
+      dissolved.forEach(d => {
+        report += `- [${d.chName.toUpperCase()}] ${d.error}\n`;
+      });
+      report += `\n`;
+    }
+
+    if (accessibility.length > 0) {
+      report += `--- ACCESSIBILITY & LINK FAULTS ---\n`;
+      accessibility.forEach(a => {
+        report += `- [${a.chName.toUpperCase()}] ${a.error}\n`;
       });
       report += `\n`;
     }
@@ -256,8 +267,7 @@ export default function Dashboard() {
       report += `--- DUPLICATES REPORT ---\n`;
       
       const internal: Record<string, { name: string; server: string; uid: string }[]> = {};
-      const crossMap = new Map<string, Set<string>>(); // uid -> set of CHs
-      const playerDetails = new Map<string, { name: string; server: string; uid: string }>(); // uid -> info
+      const cross: Record<string, { name: string; server: string; uid: string; prevCh: string }[]> = {};
 
       duplicates.forEach(d => {
         const parsed = parseDuplicateError(d);
@@ -267,52 +277,54 @@ export default function Dashboard() {
           return;
         }
 
-        if (parsed.prevCh.trim().toLowerCase() === parsed.currCh.trim().toLowerCase()) {
-          // Internal Duplicate
-          if (!internal[parsed.currCh]) {
-            internal[parsed.currCh] = [];
+        const currCh = parsed.currCh.trim();
+        const prevCh = parsed.prevCh.trim();
+
+        if (prevCh.toLowerCase() === currCh.toLowerCase()) {
+          if (!internal[currCh]) {
+            internal[currCh] = [];
           }
-          if (!internal[parsed.currCh].some(p => p.uid === parsed.uid)) {
-            internal[parsed.currCh].push({ name: parsed.name, server: parsed.server, uid: parsed.uid });
+          if (!internal[currCh].some(p => p.uid === parsed.uid)) {
+            internal[currCh].push({ name: parsed.name, server: parsed.server, uid: parsed.uid });
           }
         } else {
-          // Cross-Host Duplicate
-          const uid = parsed.uid;
-          playerDetails.set(uid, { name: parsed.name, server: parsed.server, uid: parsed.uid });
-          if (!crossMap.has(uid)) {
-            crossMap.set(uid, new Set());
+          if (!cross[currCh]) {
+            cross[currCh] = [];
           }
-          crossMap.get(uid)!.add(parsed.prevCh);
-          crossMap.get(uid)!.add(parsed.currCh);
+          if (!cross[currCh].some(p => p.uid === parsed.uid)) {
+            cross[currCh].push({ name: parsed.name, server: parsed.server, uid: parsed.uid, prevCh });
+          }
         }
       });
 
-      // 1. Internal Duplicates output
-      const internalKeys = Object.keys(internal).sort();
-      if (internalKeys.length > 0) {
-        report += `[Internal Duplicates (Registered multiple times in the SAME CH)]\n`;
-        internalKeys.forEach(ch => {
-          report += `- CH ${ch} (${internal[ch].length} player(s)):\n`;
-          internal[ch].forEach(p => {
-            if (p.server) {
-              report += `  * ${p.name} (Server: ${p.server}, UID: ${p.uid})\n`;
-            } else {
-              report += `  * ${p.name}\n`;
-            }
+      // 1. Cross-Host duplicates
+      const crossKeys = Object.keys(cross).sort();
+      if (crossKeys.length > 0) {
+        report += `[CROSS-HOST DUPLICATES (Registered across different CHs)]\n`;
+        crossKeys.forEach(ch => {
+          const list = cross[ch];
+          report += `[${ch.toUpperCase()}] List ${list.length} player(s) duplicate:\n`;
+          list.forEach(p => {
+            report += `  - ${p.name} (Server: ${p.server}, UID: ${p.uid}) -> Duplicated with CH ${p.prevCh}\n`;
           });
         });
         report += `\n`;
       }
 
-      // 2. Cross-Host Duplicates output
-      if (crossMap.size > 0) {
-        report += `[Cross-Host Duplicates (Registered across different CHs)]\n`;
-        crossMap.forEach((chs, uid) => {
-          const p = playerDetails.get(uid);
-          if (p) {
-            report += `- ${p.name} (Server: ${p.server}, UID: ${p.uid})\n`;
-            report += `  * Registered in: ${Array.from(chs).sort().join(" & ")}\n`;
-          }
+      // 2. Internal duplicates
+      const internalKeys = Object.keys(internal).sort();
+      if (internalKeys.length > 0) {
+        report += `[INTERNAL DUPLICATES (Registered multiple times inside same CH sheet)]\n`;
+        internalKeys.forEach(ch => {
+          const list = internal[ch];
+          report += `[${ch.toUpperCase()}] List ${list.length} player(s) duplicate:\n`;
+          list.forEach(p => {
+            if (p.server) {
+              report += `  - ${p.name} (Server: ${p.server}, UID: ${p.uid})\n`;
+            } else {
+              report += `  - ${p.name}\n`;
+            }
+          });
         });
         report += `\n`;
       }
