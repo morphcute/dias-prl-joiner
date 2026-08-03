@@ -75,12 +75,17 @@ export async function POST(request: Request) {
     }
   }
 
+  // Parse secondary/trainees reporting sheet URL if provided
+  const secondaryParsed = body.secondaryReportingSheetUrl ? parseSheetUrl(body.secondaryReportingSheetUrl) : null;
+
   const job = await prisma.joinerJob.create({
     data: {
       name: body.name,
       type: body.type || "diamonds",
       spreadsheetId: parsed.spreadsheetId,
       reportingSheetGid: parsed.gid || null,
+      secondarySpreadsheetId: secondaryParsed?.spreadsheetId || null,
+      secondaryReportingSheetGid: secondaryParsed?.gid || null,
       targetSpreadsheetId,
       targetSpreadsheetName: targetName,
       sheetName: body.sheetName || (body.type === "prl" ? "Pre Registered List" : "Diamond Rewards"),

@@ -50,13 +50,27 @@ export async function resolveUrl(shortUrl: string): Promise<ResolveResult | Reso
     while (attempts < maxAttempts) {
       attempts++;
 
-      const response = await fetch(currentUrl, {
-        method: "GET",
-        redirect: "manual",
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        },
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+      let response: Response;
+      try {
+        response = await fetch(currentUrl, {
+          method: "GET",
+          redirect: "manual",
+          signal: controller.signal,
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          },
+        });
+        clearTimeout(timeoutId);
+      } catch (fetchErr: any) {
+        clearTimeout(timeoutId);
+        if (fetchErr.name === "AbortError") {
+          return { error: `URL resolution timed out after 4s at ${currentUrl}` };
+        }
+        return { error: `Network error resolving ${currentUrl}: ${fetchErr.message}` };
+      }
 
       // Check if we got a redirect
       if (response.status >= 300 && response.status < 400) {

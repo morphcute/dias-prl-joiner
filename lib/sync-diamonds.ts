@@ -5,6 +5,7 @@ import { getUserAuth } from "./google";
 import { resolveUrl, ResolveResult } from "./url-resolver";
 import { verifyMlbbId } from "./mlbb";
 import { isFormulaOrError, adjustColumnsBasedOnData, detectReportingSheetColumns } from "./validations";
+import { withRetry } from "./google-retry";
 
 interface ChError {
   chName: string;
@@ -28,12 +29,17 @@ async function readChEntriesFromReportingSheet(
   const entries: ChEntry[] = [];
   const errors: ChError[] = [];
 
-  const result = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `'${sheetName}'!A1:AZ`,
-  });
+  const result = await withRetry(
+    () => sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${sheetName}'!A1:AZ`,
+    }),
+    4,
+    1500,
+    `Read Reporting Sheet (${sheetName})`
+  );
 
-  const rows = result.data.values || [];
+  const rows = (result as any)?.data?.values || [];
   if (rows.length === 0) {
     errors.push({ chName: "Reporting Sheet", error: "Reporting sheet is blank", type: "accessibility" });
     return { entries, errors };
@@ -86,6 +92,102 @@ async function readChEntriesFromReportingSheet(
   return { entries, errors };
 }
 
+/**
+ * Extracts team names and player-to-team mapping from the CH's Tournament Response Sheet (Google Form Responses).
+ * Searches for columns labeled "Your Team Name", "Team Name", "Your Squad Name", or "Team".
+ */
+async function getTeamMapFromResponseSheet(
+  sheets: any,
+  responseSheetUrl?: string
+): Promise<{
+  teamNames: string[];
+  playerTeamMap: Map<string, string>;
+}> {
+  const teamNames: string[] = [];
+  const playerTeamMap = new Map<string, string>();
+
+  if (!responseSheetUrl) return { teamNames, playerTeamMap };
+
+  try {
+    const resResult = await resolveUrl(responseSheetUrl);
+    if ("error" in resResult) return { teamNames, playerTeamMap };
+
+    const resSpreadsheetId = (resResult as ResolveResult).spreadsheetId;
+    const resSheet = await withRetry(
+      () => sheets.spreadsheets.values.get({
+        spreadsheetId: resSpreadsheetId,
+        range: "A1:Z200",
+      }),
+      2,
+      1000,
+      "Read Tournament Response Sheet"
+    );
+
+    const rows = (resSheet as any)?.data?.values || [];
+    if (rows.length < 2) return { teamNames, playerTeamMap };
+
+    let headerRowIdx = -1;
+    let teamNameCol = -1;
+    const nameCols: number[] = [];
+    const uidCols: number[] = [];
+    const ignCols: number[] = [];
+
+    for (let r = 0; r < Math.min(rows.length, 5); r++) {
+      const row = rows[r];
+      for (let c = 0; c < row.length; c++) {
+        const val = String(row[c] ?? "").trim().toUpperCase();
+        if (!val) continue;
+
+        if (
+          val === "YOUR TEAM NAME" ||
+          val === "TEAM NAME" ||
+          val === "YOUR SQUAD NAME" ||
+          val === "SQUAD NAME" ||
+          val.includes("TEAM NAME") ||
+          val.includes("YOUR TEAM") ||
+          val.includes("SQUAD NAME")
+        ) {
+          teamNameCol = c;
+        } else if (val.includes("UID") || val.includes("USER ID") || val.includes("GAME ID")) {
+          uidCols.push(c);
+        } else if (val.includes("IGN") || val.includes("GAME NAME") || val.includes("NICKNAME")) {
+          ignCols.push(c);
+        } else if (val.includes("NAME") || val.includes("PLAYER") || val.includes("CAPTAIN")) {
+          nameCols.push(c);
+        }
+      }
+      if (teamNameCol !== -1) {
+        headerRowIdx = r;
+        break;
+      }
+    }
+
+    if (headerRowIdx === -1 || teamNameCol === -1) {
+      teamNameCol = 1;
+      headerRowIdx = 0;
+    }
+
+    for (let r = headerRowIdx + 1; r < rows.length; r++) {
+      const row = rows[r];
+      const teamName = String(row[teamNameCol] ?? "").trim();
+      if (!teamName) continue;
+
+      teamNames.push(teamName);
+
+      for (const colIdx of [...uidCols, ...ignCols, ...nameCols]) {
+        const pVal = String(row[colIdx] ?? "").trim().toLowerCase();
+        if (pVal && pVal.length >= 2) {
+          playerTeamMap.set(pVal, teamName);
+        }
+      }
+    }
+  } catch (e) {
+    console.log("[ResponseSheet] Team extraction notice:", e);
+  }
+
+  return { teamNames, playerTeamMap };
+}
+
 export async function syncDiamonds(job: JoinerJob, runId: string) {
   console.log(`[Diamonds] Starting sync for job ${job.id} (${job.name})`);
 
@@ -113,7 +215,10 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
   const chStats: { chName: string; count: number }[] = [];
   const allRows: string[][] = [];
   const duplicateRowIndices: number[] = [];
-  const seenUids = new Map<string, { chName: string; server: string; rowIdx: number }>();
+  const duplicateRowsList: { rowData: string[]; groupIdx: number }[] = [];
+  const dupGroupMap = new Map<string, number>();
+  let nextDupGroupIdx = 0;
+  const seenUids = new Map<string, { chName: string; server: string; rowIdx: number; baseDupRowData: string[]; addedToDupSheet?: boolean }>();
 
   // Header: CH, NAME, SERVER, UID, CODE, AMOUNT, REMARKS
   const HEADER = ["CH", "NAME", "SERVER", "UID", "CODE", "AMOUNT", "REMARKS"];
@@ -123,7 +228,7 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
 
   await updateProgress(2, "Reading reporting sheet...");
 
-  // Step 1: Read CH entries from reporting sheet
+  // Step 1: Read CH entries from primary reporting sheet
   const reportingSpreadsheet = await sheets.spreadsheets.get({
     spreadsheetId: (job as any).spreadsheetId,
   });
@@ -148,6 +253,43 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
     errors.push(...reportingErrors);
   }
 
+  // Step 1b: Read CH entries from secondary/trainees reporting sheet if configured
+  if ((job as any).secondarySpreadsheetId) {
+    try {
+      const secSpreadsheet = await sheets.spreadsheets.get({
+        spreadsheetId: (job as any).secondarySpreadsheetId,
+      });
+
+      let secTabName: string;
+      if ((job as any).secondaryReportingSheetGid) {
+        const secTargetTab = secSpreadsheet.data.sheets?.find(
+          (s: any) => String(s.properties?.sheetId) === String((job as any).secondaryReportingSheetGid)
+        );
+        secTabName = secTargetTab?.properties?.title || secSpreadsheet.data.sheets?.[0]?.properties?.title || "Sheet1";
+      } else {
+        secTabName = secSpreadsheet.data.sheets?.[0]?.properties?.title || "Sheet1";
+      }
+
+      console.log(`[Diamonds] Secondary/Trainees Tab: "${secTabName}"`);
+
+      const { entries: secEntries, errors: secErrors } = await readChEntriesFromReportingSheet(
+        sheets, (job as any).secondarySpreadsheetId, secTabName, "diamonds"
+      );
+
+      if (secErrors && secErrors.length > 0) {
+        errors.push(...secErrors);
+      }
+
+      if (secEntries.length > 0) {
+        console.log(`[Diamonds] Added ${secEntries.length} CH entries from secondary/trainees sheet`);
+        chEntries.push(...secEntries);
+      }
+    } catch (secErr: any) {
+      console.error("[Diamonds] Failed to read secondary/trainees reporting sheet:", secErr);
+      errors.push({ chName: "Secondary Reporting Sheet", error: `Failed to read Trainees sheet: ${secErr.message || String(secErr)}` });
+    }
+  }
+
   if (chEntries.length === 0) {
     await prisma.joinerRun.update({
       where: { id: runId },
@@ -159,7 +301,7 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
   const totalCh = chEntries.length;
   await updateProgress(5, `Found ${totalCh} CHs with Diamond links. Resolving URLs...`);
 
-  // Step 2: Resolve all URLs
+  // Step 2: Resolve all URLs in parallel concurrency batches (Concurrency: 15)
   const resolvedEntries: { 
     chName: string; 
     spreadsheetId: string; 
@@ -167,49 +309,52 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
     registeredTeams?: string; 
   }[] = [];
 
-  for (let i = 0; i < chEntries.length; i++) {
-    const ch = chEntries[i];
-    const pct = 5 + Math.floor((i / totalCh) * 15);
-    await updateProgress(pct, `Resolving URLs: ${i + 1}/${totalCh} (${ch.chName})`);
+  const URL_CONCURRENCY = 15;
+  let resolvedCount = 0;
 
-    // Check if run was stopped by user
-    const currentRun = await prisma.joinerRun.findUnique({
-      where: { id: runId },
-      select: { status: true }
-    });
-    if (currentRun && currentRun.status === "failed") {
-      console.log(`[Diamonds] Job run ${runId} was stopped by user. Aborting URL resolution...`);
-      return { rowsWritten: 0, success: false, errors };
-    }
+  for (let i = 0; i < chEntries.length; i += URL_CONCURRENCY) {
+    const batch = chEntries.slice(i, i + URL_CONCURRENCY);
+    await Promise.all(
+      batch.map(async (ch) => {
+        const result = await resolveUrl(ch.url);
+        resolvedCount++;
+        const pct = 5 + Math.floor((resolvedCount / totalCh) * 15);
+        await updateProgress(pct, `Resolving URLs: ${resolvedCount}/${totalCh}`);
 
-    const result = await resolveUrl(ch.url);
-    if ("error" in result) {
-      errors.push({ chName: ch.chName, error: `URL Resolution Failed: ${result.error}` });
-      continue;
-    }
-
-    resolvedEntries.push({ 
-      chName: ch.chName, 
-      spreadsheetId: (result as ResolveResult).spreadsheetId,
-      responseSheetUrl: ch.responseSheetUrl,
-      registeredTeams: ch.registeredTeams
-    });
+        if ("error" in result) {
+          errors.push({ chName: ch.chName, error: `URL Resolution Failed: ${result.error}` });
+        } else {
+          resolvedEntries.push({
+            chName: ch.chName,
+            spreadsheetId: (result as ResolveResult).spreadsheetId,
+            responseSheetUrl: ch.responseSheetUrl,
+            registeredTeams: ch.registeredTeams,
+          });
+        }
+      })
+    );
   }
 
   const getRegisteredTeamsCount = async (chEntry: any) => {
     let responseCount: number | null = null;
     let responseError: string | null = null;
 
-    if (chEntry.responseSheetUrl) {
+    if (chEntry?.responseSheetUrl) {
       try {
         const resResult = await resolveUrl(chEntry.responseSheetUrl);
         if (!("error" in resResult)) {
           const resSpreadsheetId = (resResult as ResolveResult).spreadsheetId;
-          const resSheet = await sheets.spreadsheets.values.get({
-            spreadsheetId: resSpreadsheetId,
-            range: "A1:Z100",
-          });
-          const resRows = resSheet.data.values || [];
+          const resSheet = await withRetry(
+            () => sheets.spreadsheets.values.get({
+              spreadsheetId: resSpreadsheetId,
+              range: "A1:Z100",
+            }),
+            1,
+            500,
+            "Teams Count",
+            3000
+          );
+          const resRows = (resSheet as any)?.data?.values || [];
           if (resRows.length > 0) {
             responseCount = Math.max(0, resRows.length - 1);
           } else {
@@ -219,7 +364,7 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
           responseError = "Invalid Link";
         }
       } catch (e: any) {
-        console.log(`Failed to read response sheet for ${chEntry.chName}:`, e);
+        console.log(`Failed to read response sheet for ${chEntry?.chName}:`, e);
         const msg = e?.message || String(e);
         if (msg.includes("403") || msg.includes("permission")) {
           responseError = "Private (Verify Link Sharing)";
@@ -232,7 +377,7 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
     }
 
     let fallbackCount: number | null = null;
-    if (chEntry.registeredTeams) {
+    if (chEntry?.registeredTeams) {
       const parsed = parseInt(chEntry.registeredTeams.replace(/\D/g, ""));
       if (!isNaN(parsed)) {
         fallbackCount = parsed;
@@ -251,11 +396,21 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
     return { count: "0", source: "none" };
   };
 
+  // Response Sheet Cache Map for fast on-demand team name lookup
+  const responseSheetCache = new Map<string, { teamNames: string[]; playerTeamMap: Map<string, string> }>();
+  const fetchChTeamMap = async (resUrl?: string) => {
+    if (!resUrl) return { teamNames: [], playerTeamMap: new Map() };
+    if (responseSheetCache.has(resUrl)) return responseSheetCache.get(resUrl)!;
+    const res = await getTeamMapFromResponseSheet(sheets, resUrl);
+    responseSheetCache.set(resUrl, res);
+    return res;
+  };
+
   // Step 3: Read each CH's sheet
   await updateProgress(20, "Reading CH diamond sheets...");
 
   for (let i = 0; i < resolvedEntries.length; i++) {
-    const { chName, spreadsheetId } = resolvedEntries[i];
+    const { chName, spreadsheetId, responseSheetUrl } = resolvedEntries[i];
     const pct = 20 + Math.floor((i / resolvedEntries.length) * 40);
     await updateProgress(pct, `Reading CHs: ${i + 1}/${resolvedEntries.length} (${chName})`);
 
@@ -269,32 +424,16 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
       return { rowsWritten: 0, success: false, errors };
     }
 
-    if (i > 0) {
-      await new Promise(r => setTimeout(r, 200));
-    }
-
     try {
-      let sheetData: any = null;
-      let retries = 0;
-      while (retries < 3) {
-        try {
-          // Range "A1:Z" defaults to the first sheet, avoiding a redundant API call that doubles quota hits
-          sheetData = await sheets.spreadsheets.values.get({
-            spreadsheetId,
-            range: "A1:Z",
-          });
-          break; // success
-        } catch (e: any) {
-          if (e.message && e.message.includes("Quota exceeded") && retries < 2) {
-            retries++;
-            const waitTime = retries * 8000; // wait 8s, then 16s
-            console.log(`[Diamond] Quota exceeded on ${chName}. Retrying in ${waitTime}ms... (Attempt ${retries}/2)`);
-            await new Promise((res) => setTimeout(res, waitTime));
-          } else {
-            throw e; // Break while loop and trigger outer try/catch
-          }
-        }
-      }
+      const sheetData = await withRetry(
+        () => sheets.spreadsheets.values.get({
+          spreadsheetId,
+          range: "A1:Z",
+        }),
+        3,
+        1500,
+        `Read CH Sheet (${chName})`
+      );
 
       const rows = sheetData.data.values;
       if (!rows || rows.length === 0) {
@@ -477,27 +616,65 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
             const sameCh = prev.chName === chName;
 
             let errorMsg = "";
+            let dupWith = "";
+            let dupType = "";
+
             if (sameServer) {
               if (sameCh) {
                 errorMsg = `Duplicate winner found: ${name || "Unknown"} (Server: ${server}, UID: ${uid}) was already registered earlier in CH ${chName}`;
+                dupWith = `Same CH (${chName})`;
+                dupType = "Internal Duplicate";
               } else {
                 errorMsg = `Duplicate winner found: ${name || "Unknown"} (Server: ${server}, UID: ${uid}) was already registered in CH ${prev.chName}`;
+                dupWith = `Duplicated with ${prev.chName}`;
+                dupType = "Cross-Host Duplicate";
               }
             } else {
               if (sameCh) {
                 errorMsg = `Fake duplicate MLBB ID found (different server entered): ${name || "Unknown"} (UID: ${uid}, Server: ${server}) was already registered earlier in CH ${chName} (with Server: ${prev.server})`;
+                dupWith = `Same CH (${chName}, Real Server: ${prev.server})`;
+                dupType = "Fake Duplicate (Altered Server)";
               } else {
                 errorMsg = `Fake duplicate MLBB ID found (copied ID across CHs): ${name || "Unknown"} (UID: ${uid}, Server: ${server}) was already registered in CH ${prev.chName} (with Server: ${prev.server})`;
+                dupWith = `Copied from ${prev.chName} (Real Server: ${prev.server})`;
+                dupType = "Fake Duplicate (Altered Server)";
               }
             }
 
             errors.push({ chName, error: errorMsg });
+
+            if (!dupGroupMap.has(uid)) {
+              dupGroupMap.set(uid, nextDupGroupIdx++);
+            }
+            const groupIdx = dupGroupMap.get(uid)!;
+
+            // Push original occurrence to duplicateRowsList if not added yet
+            if (!prev.addedToDupSheet) {
+              const origDupWith = sameCh ? `Same CH (${chName})` : `Duplicated with ${chName}`;
+              const origDupType = sameServer ? (sameCh ? "Internal Duplicate" : "Cross-Host Duplicate") : "Original Entry (Copied by " + chName + ")";
+              duplicateRowsList.push({
+                rowData: [...prev.baseDupRowData, origDupWith, origDupType],
+                groupIdx,
+              });
+              prev.addedToDupSheet = true;
+            }
+            // Push current duplicate occurrence to duplicateRowsList
+            duplicateRowsList.push({
+              rowData: [chName, name, server, uid, code, amount, remarks, dupWith, dupType],
+              groupIdx,
+            });
             
             if (!duplicateRowIndices.includes(prev.rowIdx)) {
                duplicateRowIndices.push(prev.rowIdx);
             }
           } else {
-            seenUids.set(uid, { chName, server, rowIdx: 1 + allRows.length });
+            seenUids.set(uid, {
+              chName,
+              server,
+              rowIdx: 1 + allRows.length,
+              baseDupRowData: [chName, name, server, uid, code, amount, remarks],
+              addedToDupSheet: false,
+            });
           }
         }
 
@@ -629,10 +806,115 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
     });
   }
 
+  // Step 5b: Create / Update "Duplicates" tab in target spreadsheet
+  const DUP_TAB_NAME = "Duplicates";
+  const DUP_HEADER = ["CH", "NAME", "SERVER", "UID", "CODE", "AMOUNT", "REMARKS", "DUPLICATED WITH CH", "DUPLICATE TYPE"];
+  const rawDupRowValues = duplicateRowsList.map(item => item.rowData);
+  const finalDupRows = [DUP_HEADER, ...rawDupRowValues];
+
+  let dupSheet = targetSpreadsheet.data.sheets?.find((s: any) => s.properties?.title === DUP_TAB_NAME);
+  let dupSheetId: number;
+
+  if (!dupSheet) {
+    const createDupResp = await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: targetId,
+      requestBody: { requests: [{ addSheet: { properties: { title: DUP_TAB_NAME } } }] },
+    });
+    dupSheetId = createDupResp.data.replies?.[0].addSheet?.properties?.sheetId || 0;
+  } else {
+    dupSheetId = dupSheet.properties?.sheetId || 0;
+  }
+
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: targetId,
+    range: `'${DUP_TAB_NAME}'!A:I`,
+  });
+
+  if (finalDupRows.length > 0) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: targetId,
+      range: `'${DUP_TAB_NAME}'!A1:I`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values: finalDupRows },
+    });
+  }
+
   // Step 6: Formatting
   await updateProgress(95, "Applying formatting...");
   const colCount = HEADER.length;
   const requests: any[] = [];
+
+  // Duplicates tab formatting with alternating group colors
+  if (dupSheetId !== undefined) {
+    const dupColCount = DUP_HEADER.length;
+    requests.push({
+      updateSheetProperties: {
+        properties: { sheetId: dupSheetId, gridProperties: { frozenRowCount: 1 } },
+        fields: "gridProperties.frozenRowCount",
+      },
+    });
+
+    // Header formatting (Dark Navy)
+    requests.push({
+      repeatCell: {
+        range: { sheetId: dupSheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: dupColCount },
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: { red: 0.11, green: 0.13, blue: 0.22 },
+            textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true, fontSize: 10 },
+            horizontalAlignment: "CENTER",
+            verticalAlignment: "MIDDLE",
+          },
+        },
+        fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)",
+      },
+    });
+
+    // Color palette for alternating duplicate groups:
+    // Group 0, 2, 4... -> Soft Light Peach/Warm Yellow
+    // Group 1, 3, 5... -> Soft Light Ice Blue
+    const COLOR_PEACH = { red: 1.0, green: 0.94, blue: 0.86 };     // #FFF0DC Soft Peach
+    const COLOR_ICE_BLUE = { red: 0.92, green: 0.96, blue: 1.0 }; // #EBF5FF Soft Blue
+
+    duplicateRowsList.forEach((item, idx) => {
+      const rowIndex = idx + 1; // 1-indexed row in sheet (Row 0 is header)
+      const bgColor = item.groupIdx % 2 === 0 ? COLOR_PEACH : COLOR_ICE_BLUE;
+
+      requests.push({
+        repeatCell: {
+          range: {
+            sheetId: dupSheetId,
+            startRowIndex: rowIndex,
+            endRowIndex: rowIndex + 1,
+            startColumnIndex: 0,
+            endColumnIndex: dupColCount,
+          },
+          cell: {
+            userEnteredFormat: {
+              backgroundColor: bgColor,
+              borders: {
+                top: { style: "SOLID", color: { red: 0.82, green: 0.82, blue: 0.82 } },
+                bottom: { style: "SOLID", color: { red: 0.82, green: 0.82, blue: 0.82 } },
+                left: { style: "SOLID", color: { red: 0.82, green: 0.82, blue: 0.82 } },
+                right: { style: "SOLID", color: { red: 0.82, green: 0.82, blue: 0.82 } },
+              },
+              horizontalAlignment: "CENTER",
+              verticalAlignment: "MIDDLE",
+              wrapStrategy: "WRAP",
+              textFormat: { fontSize: 10 },
+            },
+          },
+          fields: "userEnteredFormat(backgroundColor,borders,horizontalAlignment,verticalAlignment,wrapStrategy,textFormat.fontSize)",
+        },
+      });
+    });
+
+    requests.push({
+      autoResizeDimensions: {
+        dimensions: { sheetId: dupSheetId, dimension: "COLUMNS", startIndex: 0, endIndex: dupColCount },
+      },
+    });
+  }
 
   requests.push({
     updateSheetProperties: {

@@ -72,6 +72,10 @@ model JoinerJob {
   spreadsheetId     String   // Reporting sheet ID (e.g., "1HUANmtnLjlGi...")
   reportingSheetGid String?  // Tab GID (e.g., "601212302" for MARCH 7, 2026)
 
+  // Secondary reporting sheet (e.g., Trainees sheet)
+  secondarySpreadsheetId     String?
+  secondaryReportingSheetGid String?
+
   // Target configuration
   targetSpreadsheetId   String?
   targetSpreadsheetName String?

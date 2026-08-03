@@ -31,6 +31,8 @@ interface JoinerJob {
   type: string;
   spreadsheetId: string;
   reportingSheetGid: string | null;
+  secondarySpreadsheetId?: string | null;
+  secondaryReportingSheetGid?: string | null;
   targetSpreadsheetId: string | null;
   targetSpreadsheetName: string | null;
   sheetName: string;
@@ -108,10 +110,20 @@ export default function Dashboard() {
   const startProgressPoller = useCallback((jobId: string) => {
     if (pollersRef.current.has(jobId)) return;
 
+    let consecutiveFailures = 0;
     const interval = setInterval(async () => {
       try {
         const res = await fetch(`/api/jobs/${jobId}/progress`, { cache: "no-store" });
-        if (!res.ok) return;
+        if (!res.ok) {
+          consecutiveFailures++;
+          if (consecutiveFailures > 8) {
+            // Auto reconnect after persistent network drop
+            fetchJobs();
+          }
+          return;
+        }
+
+        consecutiveFailures = 0;
         const data: ProgressData = await res.json();
 
         setRunProgress(prev => {
@@ -132,7 +144,12 @@ export default function Dashboard() {
           }, 2000);
           fetchJobs();
         }
-      } catch {}
+      } catch {
+        consecutiveFailures++;
+        if (consecutiveFailures > 8) {
+          fetchJobs();
+        }
+      }
     }, 1500);
 
     pollersRef.current.set(jobId, interval);
@@ -1219,7 +1236,7 @@ export default function Dashboard() {
                           
                           let statusBadge = (
                             <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                              <span className="w-1 h-1 rounded-full bg-emerald-500" /> Nominal
+                              <span className="w-1 h-1 rounded-full bg-emerald-500" /> Normal
                             </span>
                           );
 

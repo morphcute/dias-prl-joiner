@@ -49,6 +49,8 @@ export async function PUT(
       ...(body.type !== undefined && { type: body.type }),
       ...(body.spreadsheetId !== undefined && { spreadsheetId: body.spreadsheetId }),
       ...(body.reportingSheetGid !== undefined && { reportingSheetGid: body.reportingSheetGid }),
+      ...(body.secondarySpreadsheetId !== undefined && { secondarySpreadsheetId: body.secondarySpreadsheetId }),
+      ...(body.secondaryReportingSheetGid !== undefined && { secondaryReportingSheetGid: body.secondaryReportingSheetGid }),
       ...(body.targetSpreadsheetName !== undefined && { targetSpreadsheetName: body.targetSpreadsheetName }),
       ...(body.sheetName !== undefined && { sheetName: body.sheetName }),
       ...(body.validationEnabled !== undefined && { validationEnabled: body.validationEnabled }),

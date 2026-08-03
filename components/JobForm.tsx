@@ -16,6 +16,7 @@ export function JobForm({ editJobId }: JobFormProps) {
   const [name, setName] = useState("");
   const [type, setType] = useState<"diamonds" | "prl">("diamonds");
   const [reportingSheetUrl, setReportingSheetUrl] = useState("");
+  const [secondaryReportingSheetUrl, setSecondaryReportingSheetUrl] = useState("");
   const [targetName, setTargetName] = useState("");
   const [sheetName, setSheetName] = useState("");
   const [validationEnabled, setValidationEnabled] = useState(false);
@@ -38,9 +39,14 @@ export function JobForm({ editJobId }: JobFormProps) {
         setValidationEnabled(job.validationEnabled);
         setGameMode(job.gameMode || "5v5");
         setTargetName(job.targetSpreadsheetName || "");
-        // Reconstruct reporting sheet URL
+        // Reconstruct primary reporting sheet URL
         const gidPart = job.reportingSheetGid ? `#gid=${job.reportingSheetGid}` : "";
         setReportingSheetUrl(`https://docs.google.com/spreadsheets/d/${job.spreadsheetId}/edit${gidPart}`);
+        // Reconstruct secondary reporting sheet URL if available
+        if (job.secondarySpreadsheetId) {
+          const secGid = job.secondaryReportingSheetGid ? `#gid=${job.secondaryReportingSheetGid}` : "";
+          setSecondaryReportingSheetUrl(`https://docs.google.com/spreadsheets/d/${job.secondarySpreadsheetId}/edit${secGid}`);
+        }
       } catch (e: any) {
         toast(e.message || "Failed to load job", "error");
       } finally {
@@ -63,6 +69,13 @@ export function JobForm({ editJobId }: JobFormProps) {
         const match = reportingSheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
         const gidMatch = reportingSheetUrl.match(/[?&#]gid=(\d+)/);
 
+        let secMatch: RegExpMatchArray | null = null;
+        let secGidMatch: RegExpMatchArray | null = null;
+        if (secondaryReportingSheetUrl.trim()) {
+          secMatch = secondaryReportingSheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+          secGidMatch = secondaryReportingSheetUrl.match(/[?&#]gid=(\d+)/);
+        }
+
         const res = await fetch(`/api/jobs/${editJobId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -71,6 +84,8 @@ export function JobForm({ editJobId }: JobFormProps) {
             type,
             spreadsheetId: match?.[1],
             reportingSheetGid: gidMatch?.[1] || null,
+            secondarySpreadsheetId: secMatch?.[1] || null,
+            secondaryReportingSheetGid: secGidMatch?.[1] || null,
             targetSpreadsheetName: targetName || undefined,
             sheetName: sheetName || defaultSheetName,
             validationEnabled,
@@ -90,6 +105,7 @@ export function JobForm({ editJobId }: JobFormProps) {
             name,
             type,
             reportingSheetUrl,
+            secondaryReportingSheetUrl: secondaryReportingSheetUrl.trim() || undefined,
             targetSpreadsheetName: targetName,
             sheetName: sheetName || defaultSheetName,
             validationEnabled,
@@ -233,32 +249,45 @@ export function JobForm({ editJobId }: JobFormProps) {
             </h3>
 
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-slate-300">Overall Reporting Sheet URL *</label>
+              <label className="text-sm font-semibold text-slate-300">1st Source: Official Reporting Sheet URL *</label>
               <input
                 value={reportingSheetUrl}
                 onChange={e => setReportingSheetUrl(e.target.value)}
                 className="input-field font-mono !text-xs !py-4"
-                placeholder="https://docs.google.com/spreadsheets/d/.../edit?gid=..."
+                placeholder="https://docs.google.com/spreadsheets/d/.../edit?gid=... (Official Sheet)"
               />
               <div className="flex flex-col gap-3 p-5 rounded-2xl bg-indigo-500/10 border border-indigo-500/25 mt-3 space-y-2">
                 <div className="flex items-start gap-3">
                   <svg className="w-5 h-5 text-indigo-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                   <div className="text-xs text-indigo-300 font-bold">
-                    Paste the full URL including the <code className="text-indigo-200 bg-indigo-500/25 px-1.5 py-0.5 rounded">?gid=...</code> tab ID.
+                    Paste the full URL of the 1st Source (Official Sheet) including the <code className="text-indigo-200 bg-indigo-500/25 px-1.5 py-0.5 rounded">?gid=...</code> tab ID.
                   </div>
                 </div>
                 <div className="text-xs text-indigo-300/80 leading-relaxed space-y-1 bg-slate-900/50 p-3.5 rounded-xl border border-indigo-500/10">
-                  <p>✨ <strong className="text-white">Smart Column Detection Enabled:</strong> The app will automatically scan the first 10 rows of your sheet to find the correct columns dynamically.</p>
-                  <p className="mt-1.5 text-indigo-300/70">Ensure your sheet contains headers resembling:</p>
+                  <p>✨ <strong className="text-white">Smart Column Detection Enabled:</strong> Automatically scans for header names:</p>
                   <ul className="list-disc pl-4 mt-1 space-y-1 font-mono text-[10px] text-slate-300">
-                    <li><strong className="text-indigo-200">CH Nickname</strong> (e.g. "CH Nickname" or "Nickname")</li>
-                    <li><strong className="text-indigo-200">{type === "diamonds" ? "Diamond Winners Sheet" : "Pre Registered List Link"}</strong> (e.g. "{type === "diamonds" ? "Diamond Winners Sheet" : "Pre Registered List Link"}" or "{type === "diamonds" ? "Diamond Winners" : "PRL"}")</li>
+                    <li><strong className="text-indigo-200">CH Nickname</strong></li>
+                    <li><strong className="text-indigo-200">Tournament Response Sheet</strong></li>
+                    <li><strong className="text-indigo-200">{type === "diamonds" ? "Diamond Winners Sheet" : "Pre Registered List Link"}</strong></li>
                   </ul>
                   <p className="mt-2 text-red-400/90 text-[10px] font-semibold flex items-center gap-1">
                     ⚠️ Ensure the sheet is shared as "Anyone with the link can view".
                   </p>
                 </div>
               </div>
+            </div>
+
+            <div className="space-y-2 pt-4">
+              <label className="text-sm font-semibold text-slate-300">2nd Source: Trainee Reporting Sheet URL (Optional)</label>
+              <input
+                value={secondaryReportingSheetUrl}
+                onChange={e => setSecondaryReportingSheetUrl(e.target.value)}
+                className="input-field font-mono !text-xs !py-4"
+                placeholder="https://docs.google.com/spreadsheets/d/.../edit?gid=... (Trainee Sheet)"
+              />
+              <p className="text-[11px] text-slate-400 font-medium">
+                Add an optional 2nd source (Trainee Sheet) to cross-check duplicate MLBB IDs across Official CHs and Trainees.
+              </p>
             </div>
           </div>
 

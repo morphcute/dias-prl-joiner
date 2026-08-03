@@ -201,58 +201,69 @@ export function detectReportingSheetColumns(
   let registeredTeamsCol = -1;
   let headerRowIdx = -1;
 
-  // Scan the first 10 rows for headers
+  // Scan the first 10 rows for headers by name
   for (let r = 0; r < Math.min(rows.length, 10); r++) {
     const row = rows[r];
     for (let c = 0; c < row.length; c++) {
       const val = String(row[c] ?? "").trim().toUpperCase();
       if (!val) continue;
 
-      // Detect Nickname column
-      if (val.includes("NICKNAME") && val.includes("CH")) {
-        nicknameCol = c;
-      } else if (nicknameCol === -1 && (val === "NICKNAME" || val.includes("CH NAME") || val.includes("CH FULL NAME"))) {
+      // Detect "CH Nickname" column by header name
+      if (
+        val === "CH NICKNAME" ||
+        val === "NICKNAME" ||
+        (val.includes("NICKNAME") && val.includes("CH")) ||
+        val.includes("CH NAME") ||
+        val.includes("CH FULL NAME")
+      ) {
         nicknameCol = c;
       }
 
-      // Response sheet link column
-      if (val.includes("RESPONSE")) {
+      // Detect "Tournament Response Sheet" column by header name
+      if (
+        val === "TOURNAMENT RESPONSE SHEET" ||
+        val === "TOURNAMENT RESPONSES SHEET" ||
+        val === "RESPONSE SHEET" ||
+        val === "TOURNAMENT RESPONSE" ||
+        val.includes("RESPONSE SHEET") ||
+        val.includes("TOURNAMENT RESPONSE") ||
+        val.includes("FORM RESPONSE")
+      ) {
         responseSheetCol = c;
       }
 
-      // Number of registered teams column
+      // Detect Registered Teams count column by header name
       if (
-        (val.includes("REGISTERED") && val.includes("TEAM")) ||
-        val.includes("NO. OF TEAMS") ||
-        val.includes("NUMBER OF TEAMS") ||
-        val.includes("TEAM COUNT") ||
-        val.includes("TEAMS REGISTERED")
+        c !== responseSheetCol &&
+        (val === "REGISTERED TEAMS" ||
+          val === "NO. OF TEAMS" ||
+          val === "NUMBER OF TEAMS" ||
+          val === "TOTAL TEAMS" ||
+          (val.includes("REGISTERED") && val.includes("TEAMS")))
       ) {
         registeredTeamsCol = c;
       }
 
-      // Detect Link column depending on type
+      // Detect "Pre Registered List Link" or "Diamond Winners Sheet" column by header name
       if (type === "prl") {
         if (
+          val === "PRE REGISTERED LIST LINK" ||
           val.includes("PRE REGISTERED LIST") ||
           val.includes("PRE-REGISTERED") ||
           val.includes("PRL") ||
-          val.includes("PRE REGISTER") ||
           val.includes("REGISTERED LIST")
         ) {
           linkCol = c;
         }
       } else {
-        // diamonds
         if (
+          val === "DIAMOND WINNERS SHEET" ||
           val.includes("DIAMOND WINNERS") ||
-          val.includes("DIAMOND WINNER") ||
           val.includes("DIAMONDS WINNER") ||
           val.includes("DIAS WINNER") ||
-          val.includes("WINNERS SHEET")
+          val.includes("WINNERS SHEET") ||
+          val.includes("DIAMONDS")
         ) {
-          linkCol = c;
-        } else if (linkCol === -1 && (val.includes("DIAMONDS") || val.includes("DIAS"))) {
           linkCol = c;
         }
       }
