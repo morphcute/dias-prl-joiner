@@ -347,8 +347,28 @@ export default function Dashboard() {
     
     report += `👥 Compiled CHs               : ${viewStats.length}\n`;
     report += `🏆 Active Players/Winners     : ${totalPlayers}\n`;
+    const fakesCount = duplicates.filter(d => parseDuplicateError(d)?.isFakedServer).length;
+    const crossCount = duplicates.filter(d => {
+      const p = parseDuplicateError(d);
+      return p && !p.isFakedServer && p.prevCh.toLowerCase() !== p.currCh.toLowerCase();
+    }).length;
+    const internalCount = duplicates.length - fakesCount - crossCount;
+
+    report += `👥 Compiled CHs               : ${viewStats.length}\n`;
+    report += `🏆 Active Players/Winners     : ${totalPlayers}\n`;
+    if (fakesCount > 0) {
+      report += `🚨 Fake Duplicates (Faked Srv): ${fakesCount}\n`;
+    }
+    if (crossCount > 0) {
+      report += `🔁 Cross-Host Duplicates      : ${crossCount}\n`;
+    }
+    if (internalCount > 0) {
+      report += `📄 Internal Duplicates        : ${internalCount}\n`;
+    }
+    if (duplicates.length === 0) {
+      report += `🔁 Duplicate Entries          : 0\n`;
+    }
     report += `❌ Dissolved Tournaments       : ${dissolved.length}\n`;
-    report += `🔁 Duplicate Entries          : ${duplicates.length}\n`;
     report += `🔧 Auto Fixes Applied         : ${autoFixes.length}\n`;
     report += `⚠️ Validation Errors          : ${validationErrors.length}\n\n`;
 
@@ -393,44 +413,75 @@ export default function Dashboard() {
     }
 
     if (duplicates.length > 0) {
-      const internal: Record<string, { name: string; server: string; uid: string }[]> = {};
-      const cross: Record<string, Record<string, { name: string; server: string; uid: string }[]>> = {};
+      type ParsedDup = NonNullable<ReturnType<typeof parseDuplicateError>>;
+      const fakes: Record<string, Record<string, ParsedDup[]>> = {};
+      const cross: Record<string, Record<string, ParsedDup[]>> = {};
+      const internal: Record<string, ParsedDup[]> = {};
 
       duplicates.forEach(d => {
         const parsed = parseDuplicateError(d);
         if (!parsed) {
           if (!internal["Other"]) internal["Other"] = [];
-          internal["Other"].push({ name: d.error, server: "", uid: "" });
+          internal["Other"].push({ name: d.error, server: "", uid: "", prevCh: "", currCh: d.chName, isFakedServer: false });
           return;
         }
 
         const currCh = parsed.currCh.trim();
         const prevCh = parsed.prevCh.trim();
 
-        if (prevCh.toLowerCase() === currCh.toLowerCase()) {
-          if (!internal[currCh]) {
-            internal[currCh] = [];
+        if (parsed.isFakedServer) {
+          if (!fakes[currCh]) fakes[currCh] = {};
+          if (!fakes[currCh][prevCh]) fakes[currCh][prevCh] = [];
+          if (!fakes[currCh][prevCh].some(p => p.uid === parsed.uid)) {
+            fakes[currCh][prevCh].push(parsed);
           }
+        } else if (prevCh.toLowerCase() === currCh.toLowerCase()) {
+          if (!internal[currCh]) internal[currCh] = [];
           if (!internal[currCh].some(p => p.uid === parsed.uid)) {
-            internal[currCh].push({ name: parsed.name, server: parsed.server, uid: parsed.uid });
+            internal[currCh].push(parsed);
           }
         } else {
-          if (!cross[currCh]) {
-            cross[currCh] = {};
-          }
-          if (!cross[currCh][prevCh]) {
-            cross[currCh][prevCh] = [];
-          }
+          if (!cross[currCh]) cross[currCh] = {};
+          if (!cross[currCh][prevCh]) cross[currCh][prevCh] = [];
           if (!cross[currCh][prevCh].some(p => p.uid === parsed.uid)) {
-            cross[currCh][prevCh].push({ name: parsed.name, server: parsed.server, uid: parsed.uid });
+            cross[currCh][prevCh].push(parsed);
           }
         }
       });
 
+      const fakeKeys = Object.keys(fakes).sort();
+      if (fakeKeys.length > 0) {
+        report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        report += `🚨 FAKE DUPLICATES (COPIED MLBB IDs WITH ALTERED SERVERS)\n`;
+        report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+        
+        fakeKeys.forEach((ch, idx) => {
+          if (idx > 0) {
+            report += `──────────────────────────────────────\n\n`;
+          }
+          const prevChs = Object.keys(fakes[ch]).sort();
+          prevChs.forEach((prevCh, pIdx) => {
+            if (pIdx > 0) report += `\n`;
+            const list = fakes[ch][prevCh];
+            report += `【${ch.toUpperCase()}】 ${list.length} fake duplicate(s)\n`;
+            report += `Copied MLBB ID from ► ${prevCh}\n\n`;
+            list.forEach(p => {
+              report += ` • Player Name : ${p.name}\n`;
+              report += `   MLBB ID     : ${p.uid}\n`;
+              report += `   Faked Server: ${p.server} (Submitted by ${ch})\n`;
+              if (p.prevServer) {
+                report += `   Real Server : ${p.prevServer} (Original in ${prevCh})\n`;
+              }
+              report += `\n`;
+            });
+          });
+        });
+      }
+
       const crossKeys = Object.keys(cross).sort();
       if (crossKeys.length > 0) {
         report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-        report += `🔁 CROSS-HOST DUPLICATES\n`;
+        report += `🔁 CROSS-HOST DUPLICATES (SAME SERVER & UID)\n`;
         report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
         
         crossKeys.forEach((ch, idx) => {
@@ -444,9 +495,9 @@ export default function Dashboard() {
             report += `【${ch.toUpperCase()}】 ${list.length} duplicate(s)\n`;
             report += `Duplicated with ► ${prevCh}\n\n`;
             list.forEach(p => {
-              report += ` • ${p.name}\n`;
-              report += `   Server: ${p.server}\n`;
-              report += `   UID   : ${p.uid}\n\n`;
+              report += ` • Player Name : ${p.name}\n`;
+              report += `   Server      : ${p.server}\n`;
+              report += `   MLBB ID     : ${p.uid}\n\n`;
             });
           });
         });
@@ -455,7 +506,7 @@ export default function Dashboard() {
       const internalKeys = Object.keys(internal).sort();
       if (internalKeys.length > 0) {
         report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-        report += `📄 INTERNAL DUPLICATES\n`;
+        report += `📄 INTERNAL DUPLICATES (SAME CH)\n`;
         report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
         
         internalKeys.forEach((ch, idx) => {
@@ -465,10 +516,10 @@ export default function Dashboard() {
           const list = internal[ch];
           report += `【${ch.toUpperCase()}】 ${list.length} duplicate(s)\n\n`;
           list.forEach(p => {
-            report += ` • ${p.name}\n`;
+            report += ` • Player Name : ${p.name}\n`;
             if (p.server) {
-              report += `   Server: ${p.server}\n`;
-              report += `   UID   : ${p.uid}\n\n`;
+              report += `   Server      : ${p.server}\n`;
+              report += `   MLBB ID     : ${p.uid}\n\n`;
             } else {
               report += `\n`;
             }
@@ -543,17 +594,33 @@ export default function Dashboard() {
   };
 
   const parseDuplicateError = (err: ChError) => {
-    const regex = /(?:Duplicate player entry found|Duplicate winner found):\s*(.*?)\s*\(Server:\s*(\d*),\s*UID:\s*(\d*)\)\s*was\s*already\s*registered\s*in\s*CH\s*(.*)/i;
-    const match = err.error.match(regex);
-    if (match) {
+    const sameServerRegex = /(?:Duplicate player entry found|Duplicate winner found):\s*(.*?)\s*\(Server:\s*(\d*),\s*UID:\s*(\d*)\)\s*was\s*already\s*registered\s*(?:earlier\s*)?in\s*CH\s*(.*)/i;
+    const match1 = err.error.match(sameServerRegex);
+    if (match1) {
       return {
-        name: match[1],
-        server: match[2],
-        uid: match[3],
-        prevCh: match[4],
-        currCh: err.chName
+        name: match1[1].trim(),
+        server: match1[2].trim(),
+        uid: match1[3].trim(),
+        prevCh: match1[4].trim(),
+        currCh: err.chName.trim(),
+        isFakedServer: false,
       };
     }
+
+    const diffServerRegex = /Duplicate MLBB ID found.*:\s*(.*?)\s*\(UID:\s*(\d*),\s*Server:\s*(\d*)\)\s*was\s*already\s*registered\s*(?:earlier\s*)?in\s*CH\s*(.*?)(?:\s*\(with Server:\s*(\d*)\))?$/i;
+    const match2 = err.error.match(diffServerRegex);
+    if (match2) {
+      return {
+        name: match2[1].trim(),
+        uid: match2[2].trim(),
+        server: match2[3].trim(),
+        prevCh: match2[4].trim(),
+        prevServer: match2[5] ? match2[5].trim() : undefined,
+        currCh: err.chName.trim(),
+        isFakedServer: true,
+      };
+    }
+
     return null;
   };
 
@@ -1236,31 +1303,48 @@ export default function Dashboard() {
                           );
                         }
 
+                        const isFake = parsed.isFakedServer;
+                        const bgClass = isFake 
+                          ? "bg-[#1c1214] border-rose-500/30 hover:border-rose-500/50" 
+                          : "bg-[#131722] border-amber-500/10 hover:border-amber-500/25";
+                        const barClass = isFake ? "bg-rose-500" : "bg-amber-500/50";
+                        const badgeClass = isFake 
+                          ? "text-rose-400 font-extrabold bg-rose-500/10 border-rose-500/30" 
+                          : "text-slate-400 font-bold bg-slate-800 border-slate-700";
+                        const badgeText = isFake ? "🚨 FAKE DUPLICATE" : "MLBB PLAYER";
+
                         return (
-                          <div key={i} className="p-4 rounded-2xl bg-[#131722] border border-amber-500/10 hover:border-amber-500/25 transition-all flex flex-col justify-between relative overflow-hidden">
-                            <div className="absolute left-0 top-0 bottom-0 w-1 bg-amber-500/50" />
+                          <div key={i} className={`p-4 rounded-2xl border transition-all flex flex-col justify-between relative overflow-hidden ${bgClass}`}>
+                            <div className={`absolute left-0 top-0 bottom-0 w-1 ${barClass}`} />
                             <div>
                               <div className="flex justify-between items-start gap-4">
                                 <h4 className="font-black text-sm text-white tracking-wide">{parsed.name}</h4>
-                                <span className="text-[9px] uppercase font-bold tracking-widest font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
-                                  MLBB PLAYER
+                                <span className={`text-[9px] uppercase tracking-widest font-mono px-2 py-0.5 rounded border ${badgeClass}`}>
+                                  {badgeText}
                                 </span>
                               </div>
-                              <div className="text-[11px] text-slate-400 font-mono mt-1">
-                                Server: <span className="text-slate-300 font-bold mr-3">{parsed.server}</span> 
-                                UID: <span className="text-slate-300 font-bold">{parsed.uid}</span>
+                              <div className="text-[11px] text-slate-400 font-mono mt-1 flex flex-wrap items-center gap-x-4 gap-y-1">
+                                <span>UID: <span className="text-white font-bold">{parsed.uid}</span></span>
+                                {isFake ? (
+                                  <>
+                                    <span>Faked Server: <span className="text-rose-400 font-black">{parsed.server}</span></span>
+                                    {parsed.prevServer && <span>Real Server: <span className="text-emerald-400 font-black">{parsed.prevServer}</span></span>}
+                                  </>
+                                ) : (
+                                  <span>Server: <span className="text-slate-300 font-bold">{parsed.server}</span></span>
+                                )}
                               </div>
                             </div>
                             
                             <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs">
                               <div className="flex flex-col">
-                                <span className="text-[9px] uppercase font-bold text-slate-500 tracking-wider">Originally In</span>
+                                <span className="text-[9px] uppercase font-bold text-slate-500 tracking-wider">{isFake ? "Original CH" : "Originally In"}</span>
                                 <span className="font-extrabold text-indigo-400">{parsed.prevCh}</span>
                               </div>
                               <div className="text-slate-500 shrink-0 font-bold px-2">➡️</div>
                               <div className="flex flex-col items-end">
-                                <span className="text-[9px] uppercase font-bold text-slate-500 tracking-wider">Duplicate In</span>
-                                <span className="font-extrabold text-amber-400">{parsed.currCh}</span>
+                                <span className="text-[9px] uppercase font-bold text-slate-500 tracking-wider">{isFake ? "Copied By CH" : "Duplicate In"}</span>
+                                <span className={`font-extrabold ${isFake ? "text-rose-400" : "text-amber-400"}`}>{parsed.currCh}</span>
                               </div>
                             </div>
                           </div>

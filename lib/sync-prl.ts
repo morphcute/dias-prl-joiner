@@ -128,7 +128,7 @@ export async function syncPrl(job: JoinerJob, runId: string) {
   const chStats: { chName: string; count: number }[] = [];
   const allRows: string[][] = [];
   const duplicateRowIndices: number[] = [];
-  const seenUids = new Map<string, { chName: string; rowIdx: number }>();
+  const seenUids = new Map<string, { chName: string; server: string; rowIdx: number }>();
 
   // Header: CH, Players Name, Players IGN, Server, UID (NO "No." column)
   const HEADER = ["CH", "Players Name", "Players IGN", "Server", "UID"];
@@ -540,12 +540,29 @@ export async function syncPrl(job: JoinerJob, runId: string) {
         }
 
         let isDuplicate = false;
-        if (uid && server) {
-          const uniquePlayerIdentifier = `${server}-${uid}`;
-          if (seenUids.has(uniquePlayerIdentifier)) {
+        if (uid) {
+          if (seenUids.has(uid)) {
             isDuplicate = true;
-            const prevCh = seenUids.get(uniquePlayerIdentifier)!;
-            errors.push({ chName, error: `Duplicate player entry found: ${name} (Server: ${server}, UID: ${uid}) was already registered in CH ${prevCh.chName}` });
+            const prevCh = seenUids.get(uid)!;
+            const sameServer = prevCh.server === server;
+            const sameCh = prevCh.chName === chName;
+
+            let errorMsg = "";
+            if (sameServer) {
+              if (sameCh) {
+                errorMsg = `Duplicate player entry found: ${name || "Unknown"} (Server: ${server}, UID: ${uid}) was already registered earlier in CH ${chName}`;
+              } else {
+                errorMsg = `Duplicate player entry found: ${name || "Unknown"} (Server: ${server}, UID: ${uid}) was already registered in CH ${prevCh.chName}`;
+              }
+            } else {
+              if (sameCh) {
+                errorMsg = `Fake duplicate MLBB ID found (different server entered): ${name || "Unknown"} (UID: ${uid}, Server: ${server}) was already registered earlier in CH ${chName} (with Server: ${prevCh.server})`;
+              } else {
+                errorMsg = `Fake duplicate MLBB ID found (copied ID across CHs): ${name || "Unknown"} (UID: ${uid}, Server: ${server}) was already registered in CH ${prevCh.chName} (with Server: ${prevCh.server})`;
+              }
+            }
+
+            errors.push({ chName, error: errorMsg });
 
             // Push the first occurrence index to the list so BOTH get highlighted!
             if (!duplicateRowIndices.includes(prevCh.rowIdx)) {
@@ -553,7 +570,7 @@ export async function syncPrl(job: JoinerJob, runId: string) {
             }
           } else {
             // Track the row index that this player will occupy in the final sheet
-            seenUids.set(uniquePlayerIdentifier, { chName, rowIdx: 1 + allRows.length });
+            seenUids.set(uid, { chName, server, rowIdx: 1 + allRows.length });
           }
         }
 
