@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { CheckCircle2, AlertCircle, Info } from "lucide-react";
 
 type ToastType = "success" | "error" | "info";
 
@@ -30,31 +29,29 @@ export function ToastProvider() {
 
   useEffect(() => {
     globalAddToast = addToast;
-    return () => {
-      globalAddToast = null;
-    };
+    return () => { globalAddToast = null; };
   }, [addToast]);
 
   const getIcon = (type: ToastType) => {
     switch (type) {
       case "success":
-        return <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />;
+        return <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>;
       case "error":
-        return <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />;
+        return <svg className="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>;
       default:
-        return <Info className="w-5 h-5 text-cyan-400 shrink-0" />;
+        return <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
     }
   };
 
   return (
-    <div className="fixed bottom-6 right-6 z-[100] space-y-3 max-w-sm w-full px-4 pointer-events-none">
+    <div className="fixed bottom-6 right-6 z-[100] space-y-2 max-w-sm">
       {toasts.map((t) => (
         <div
           key={t.id}
-          className="pointer-events-auto glass-panel-3d rounded-2xl px-5 py-4 flex items-center gap-3.5 animate-slide-up border border-slate-700/80 shadow-2xl backdrop-blur-xl"
+          className="glass-panel rounded-xl px-4 py-3 flex items-center gap-3 animate-slide-up border border-white/[0.1] shadow-xl"
         >
           {getIcon(t.type)}
-          <span className="text-sm font-semibold text-slate-100 leading-snug">{t.message}</span>
+          <span className="text-sm text-white/80">{t.message}</span>
         </div>
       ))}
     </div>

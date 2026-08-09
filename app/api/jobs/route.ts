@@ -14,6 +14,9 @@ function parseSheetUrl(url: string): { spreadsheetId: string; gid?: string } | n
   return { spreadsheetId: match[1], gid: gidMatch?.[1] };
 }
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET() {
   const session = await auth();
   if (!session?.user?.id) {

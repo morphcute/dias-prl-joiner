@@ -1,7 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
-import { AlertTriangle, Info, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface ModalProps {
   isOpen: boolean;
@@ -13,23 +12,12 @@ interface ModalProps {
   footer?: React.ReactNode;
 }
 
-export default function Modal({
-  isOpen,
-  onClose,
-  title,
-  type = "default",
-  maxWidth = "max-w-md",
-  children,
-  footer,
-}: ModalProps) {
+export default function Modal({ isOpen, onClose, title, type = "default", maxWidth = "max-w-md", children, footer }: ModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
 
-  const handleOverlayClick = useCallback(
-    (e: React.MouseEvent) => {
-      if (e.target === overlayRef.current) onClose();
-    },
-    [onClose]
-  );
+  const handleOverlayClick = useCallback((e: React.MouseEvent) => {
+    if (e.target === overlayRef.current) onClose();
+  }, [onClose]);
 
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
@@ -51,40 +39,27 @@ export default function Modal({
     <div
       ref={overlayRef}
       onClick={handleOverlayClick}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md animate-fade-in px-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm animate-fade-in px-4"
     >
-      <div
-        className={`glass-panel-3d rounded-3xl w-full ${maxWidth} p-6 md:p-8 space-y-5 animate-slide-up border border-slate-700/80 shadow-2xl relative overflow-hidden`}
-      >
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div
-              className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 ${
-                type === "danger"
-                  ? "bg-rose-500/20 text-rose-400 border border-rose-500/30 shadow-lg shadow-rose-500/10"
-                  : "bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 shadow-lg shadow-indigo-500/10"
-              }`}
-            >
-              {type === "danger" ? (
-                <AlertTriangle className="w-5 h-5" />
-              ) : (
-                <Info className="w-5 h-5" />
-              )}
-            </div>
-            <h3 className="text-xl font-black text-white tracking-tight">{title}</h3>
+      <div className={`bg-slate-800 rounded-2xl w-full ${maxWidth} p-6 space-y-4 animate-slide-up shadow-2xl shadow-indigo-500/5`}>
+        <div className="flex items-center gap-3">
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+            type === "danger" ? "bg-red-500/10 text-red-400" : "bg-indigo-500/10 text-indigo-400"
+          }`}>
+            {type === "danger" ? (
+              <svg className="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            ) : (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            )}
           </div>
-
-          <button
-            onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/80 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <h3 className="text-lg font-bold text-slate-50 tracking-tight">{title}</h3>
         </div>
-
-        <div className="text-slate-300 text-sm">{children}</div>
-
-        {footer && <div className="pt-3 border-t border-slate-800/80">{footer}</div>}
+        <div>{children}</div>
+        {footer && <div className="pt-2">{footer}</div>}
       </div>
     </div>
   );

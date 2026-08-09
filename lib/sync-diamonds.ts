@@ -191,7 +191,11 @@ async function getTeamMapFromResponseSheet(
 export async function syncDiamonds(job: JoinerJob, runId: string) {
   console.log(`[Diamonds] Starting sync for job ${job.id} (${job.name})`);
 
+  let lastProgressTime = 0;
   const updateProgress = async (percentage: number, message?: string) => {
+    const now = Date.now();
+    if (percentage < 100 && percentage > 0 && now - lastProgressTime < 450) return;
+    lastProgressTime = now;
     try {
       await prisma.joinerRun.update({
         where: { id: runId },
@@ -201,7 +205,7 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
         },
       });
     } catch (e) {
-      console.error("Failed to update progress:", e);
+      // Suppress progress update errors so DB locks never crash the sync engine
     }
   };
 
@@ -723,34 +727,36 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
 
   // Step 4: Optional MooGold verification
   if (job.validationEnabled && allRows.length > 0) {
-    await updateProgress(60, "Verifying IDs with MooGold...");
+    await updateProgress(60, "Fast Verifying IDs with MooGold...");
     const statusColIdx = HEADER.length - 1;
-    const BATCH_SIZE = 5;
+    const BATCH_SIZE = 6;
 
     for (let i = 0; i < allRows.length; i += BATCH_SIZE) {
       const batch = allRows.slice(i, i + BATCH_SIZE);
-      await Promise.all(batch.map(async (row) => {
-        const server = row[2]; // SERVER
-        const uid = row[3]; // UID
-        if (server && uid) {
-          try {
-            const result = await verifyMlbbId(uid, server);
-            if (result.success && result.ign) {
-              row[statusColIdx] = "Verified";
-            } else if (result.error === "Player not found") {
-              row[statusColIdx] = "Not Found";
-            } else {
-              row[statusColIdx] = "Error";
+      await Promise.allSettled(
+        batch.map(async (row) => {
+          const server = row[2]; // SERVER
+          const uid = row[3]; // UID
+          if (server && uid) {
+            try {
+              const result = await verifyMlbbId(String(uid), String(server));
+              if (result.success && result.ign) {
+                row[statusColIdx] = "Verified";
+              } else if (result.error === "Player not found") {
+                row[statusColIdx] = "Not Found";
+              } else {
+                row[statusColIdx] = "Unverified";
+              }
+            } catch {
+              row[statusColIdx] = "Unverified";
             }
-          } catch {
-            row[statusColIdx] = "Error";
           }
-        }
-      }));
+        })
+      );
 
       const pct = 60 + Math.floor(((i + batch.length) / allRows.length) * 25);
-      await updateProgress(pct, `Verifying: ${Math.min(i + BATCH_SIZE, allRows.length)}/${allRows.length}`);
-      await new Promise(r => setTimeout(r, 600));
+      await updateProgress(pct, `MooGold Verifying: ${Math.min(i + BATCH_SIZE, allRows.length)}/${allRows.length}`);
+      await new Promise((r) => setTimeout(r, 150));
     }
   }
 

@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { syncDiamonds } from "@/lib/sync-diamonds";
 import { syncPrl } from "@/lib/sync-prl";
 
+export const dynamic = "force-dynamic";
 export const maxDuration = 300; // 5 minutes (Needed for MooGold verifier which takes time)
 
 export async function POST(

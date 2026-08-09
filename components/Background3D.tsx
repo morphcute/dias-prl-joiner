@@ -23,7 +23,6 @@ export function Background3D() {
     };
     window.addEventListener("resize", handleResize);
 
-    // Particle nodes
     const particleCount = Math.min(Math.floor((width * height) / 18000), 70);
     const particles = Array.from({ length: particleCount }, () => ({
       x: Math.random() * width,
@@ -47,7 +46,6 @@ export function Background3D() {
     const render = () => {
       ctx.clearRect(0, 0, width, height);
 
-      // Draw subtle grid perspective lines
       ctx.strokeStyle = "rgba(99, 102, 241, 0.03)";
       ctx.lineWidth = 1;
       const gridSize = 80;
@@ -64,7 +62,6 @@ export function Background3D() {
         ctx.stroke();
       }
 
-      // Update and render particles
       particles.forEach((p, i) => {
         p.x += p.vx + (mouseX - width / 2) * 0.00005;
         p.y += p.vy + (mouseY - height / 2) * 0.00005;
@@ -83,7 +80,6 @@ export function Background3D() {
         ctx.shadowColor = "rgba(99, 102, 241, 0.5)";
         ctx.fill();
 
-        // Connect nearby particles with glow laser lines
         for (let j = i + 1; j < particles.length; j++) {
           const p2 = particles[j];
           const dx = p.x - p2.x;

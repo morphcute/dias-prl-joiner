@@ -25,9 +25,12 @@ import {
   Terminal,
   ShieldCheck,
   Zap,
-  Filter,
   Grid,
   List,
+  Copy,
+  Download,
+  AlertCircle,
+  FileText,
 } from "lucide-react";
 
 interface ChError {
@@ -45,6 +48,7 @@ interface JoinerRun {
   errors: string | ChError[];
   startedAt: string;
   completedAt: string | null;
+  chStats?: string | { chName: string; count: number }[];
 }
 
 interface JoinerJob {
@@ -82,13 +86,11 @@ export default function Dashboard() {
   const [typeFilter, setTypeFilter] = useState<"all" | "diamonds" | "prl">("all");
   const [viewLayout, setViewLayout] = useState<"grid" | "table">("grid");
 
-  const [runModalOpen, setRunModalOpen] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [errorsModalOpen, setErrorsModalOpen] = useState(false);
   const [selectedJob, setSelectedJob] = useState<JoinerJob | null>(null);
   const [viewErrors, setViewErrors] = useState<ChError[]>([]);
   const [viewStats, setViewStats] = useState<{ chName: string; count: number }[]>([]);
-  const [statsModalOpen, setStatsModalOpen] = useState(false);
   const [activeLogTab, setActiveLogTab] = useState<"overview" | "chHealth" | "duplicates" | "logs">("overview");
   const [modalSearch, setModalSearch] = useState("");
   const [startingJobs, setStartingJobs] = useState<Set<string>>(new Set());
@@ -118,33 +120,15 @@ export default function Dashboard() {
     return `${diffDay}d ago`;
   };
 
-  const fetchJobs = useCallback(async () => {
-    try {
-      const res = await fetch("/api/jobs", { cache: "no-store" });
-      if (res.status === 401) return;
-      if (res.ok) {
-        const data = await res.json();
-        setJobs(data);
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchJobs();
-    const timer = setInterval(fetchJobs, 12000);
-    return () => clearInterval(timer);
-  }, [fetchJobs]);
-
   const pollJobStatus = useCallback((jobId: string) => {
     if (pollersRef.current.has(jobId)) return;
 
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`/api/jobs/${jobId}/run`);
+        const res = await fetch(`/api/jobs/${jobId}/progress?t=${Date.now()}`, {
+          cache: "no-store",
+          headers: { "Cache-Control": "no-cache" },
+        });
         if (!res.ok) return;
         const data: ProgressData = await res.json();
 
@@ -162,9 +146,41 @@ export default function Dashboard() {
       } catch (e) {
         console.error(e);
       }
-    }, 2000);
+    }, 1000);
 
     pollersRef.current.set(jobId, interval);
+  }, []);
+
+  const fetchJobs = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/jobs?t=${Date.now()}`, {
+        cache: "no-store",
+        headers: { "Cache-Control": "no-cache" },
+      });
+      if (res.status === 401) return;
+      if (res.ok) {
+        const data: JoinerJob[] = await res.json();
+        setJobs(data);
+
+        // Auto-attach poller to any running job
+        data.forEach((job) => {
+          const latestRunStatus = job.runs?.[0]?.status;
+          if (latestRunStatus === "running") {
+            pollJobStatus(job.id);
+          }
+        });
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }, [pollJobStatus]);
+
+  useEffect(() => {
+    fetchJobs();
+    const timer = setInterval(fetchJobs, 8000);
+    return () => clearInterval(timer);
   }, [fetchJobs]);
 
   const handleStartRun = async (job: JoinerJob) => {
@@ -234,6 +250,7 @@ export default function Dashboard() {
     }
   };
 
+  // Open Log & CH Health Diagnostics Modal
   const openLogModal = (job: JoinerJob) => {
     setSelectedJob(job);
     const latestRun = job.runs?.[0];
@@ -249,10 +266,106 @@ export default function Dashboard() {
         parsedErrors = latestRun.errors;
       }
       setViewErrors(parsedErrors);
+
+      const chStatsStr = (latestRun as any)?.chStats;
+      const parsedStats = typeof chStatsStr === "string" ? JSON.parse(chStatsStr) : chStatsStr || [];
+      setViewStats(parsedStats);
     } else {
       setViewErrors([]);
+      setViewStats([]);
     }
+    setActiveLogTab("overview");
+    setModalSearch("");
     setErrorsModalOpen(true);
+  };
+
+  // Categorize errors
+  const getErrorType = (err: ChError) => {
+    const msg = (err.error || "").toLowerCase();
+    if (msg.includes("cannot access") || msg.includes("permission") || msg.includes("dissolved")) return "accessibility";
+    if (msg.includes("duplicate")) return "duplicate";
+    if (msg.includes("fixed") || msg.includes("validation")) return "validation_fixed";
+    return "general";
+  };
+
+  // Parse duplicate string
+  const parseDuplicateError = (err: ChError) => {
+    const msg = err.error || "";
+    const isFaked = msg.includes("Faked Server ID");
+    const nameMatch = msg.match(/Player "([^"]+)"/);
+    const uidMatch = msg.match(/\(UID: (\d+)/);
+    const serverMatch = msg.match(/Server: (\d+)/);
+    const prevServerMatch = msg.match(/Real Server: (\d+)/);
+    const prevChMatch = msg.match(/in (.*?) \(row/);
+    const currChMatch = msg.match(/already in (.*?)\./) || msg.match(/Duplicate in (.*?)\./);
+
+    if (nameMatch && uidMatch) {
+      return {
+        name: nameMatch[1],
+        uid: uidMatch[1],
+        server: serverMatch ? serverMatch[1] : "N/A",
+        prevServer: prevServerMatch ? prevServerMatch[1] : null,
+        prevCh: prevChMatch ? prevChMatch[1].trim() : "Unknown CH",
+        currCh: currChMatch ? currChMatch[1].trim() : err.chName,
+        isFakedServer: isFaked,
+      };
+    }
+    return null;
+  };
+
+  // Copy Summary Report to Clipboard
+  const copyTextReport = () => {
+    if (!selectedJob) return;
+    const latestRun = selectedJob.runs?.[0];
+    const totalRows = latestRun?.rowsWritten || 0;
+    const criticals = viewErrors.filter((e) => ["accessibility", "dissolved"].includes(getErrorType(e)));
+    const duplicates = viewErrors.filter((e) => getErrorType(e) === "duplicate");
+
+    let text = `📊 SYNC REPORT SUMMARY: ${selectedJob.name}\n`;
+    text += `====================================\n`;
+    text += `Status: ${latestRun?.status || "N/A"}\n`;
+    text += `Total Extracted Rows: ${totalRows}\n`;
+    text += `Critical Issues: ${criticals.length}\n`;
+    text += `Duplicate Entries: ${duplicates.length}\n\n`;
+
+    if (viewStats.length > 0) {
+      text += `👥 CH HOST BREAKDOWN:\n`;
+      viewStats.forEach((s) => {
+        text += `- ${s.chName}: ${s.count} players\n`;
+      });
+      text += `\n`;
+    }
+
+    if (viewErrors.length > 0) {
+      text += `⚠️ LOGS & ISSUES:\n`;
+      viewErrors.forEach((e) => {
+        text += `[${e.chName}] ${e.error}\n`;
+      });
+    }
+
+    navigator.clipboard.writeText(text);
+    toast("Report summary copied to clipboard!", "success");
+  };
+
+  // Export CSV Report
+  const exportReportToCSV = () => {
+    if (!selectedJob) return;
+    let csvContent = "data:text/csv;charset=utf-8,CH Name,Issue / Log Type,Details\n";
+
+    viewErrors.forEach((e) => {
+      const type = getErrorType(e);
+      const safeError = `"${e.error.replace(/"/g, '""')}"`;
+      csvContent += `"${e.chName}",${type},${safeError}\n`;
+    });
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `report_${selectedJob.name.replace(/\s+/g, "_")}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast("Report exported to CSV!", "success");
   };
 
   // Filter jobs
@@ -264,7 +377,7 @@ export default function Dashboard() {
     return matchesSearch && matchesType;
   });
 
-  // Calculate metrics
+  // Metrics
   const totalJobs = jobs.length;
   const diamondCount = jobs.filter((j) => j.type === "diamonds").length;
   const prlCount = jobs.filter((j) => j.type === "prl").length;
@@ -291,12 +404,11 @@ export default function Dashboard() {
       <Background3D />
       <ToastProvider />
 
-      {/* Main Container */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-10 animate-fade-in">
         {/* Navigation Bar */}
-        <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 glass-panel-3d p-5 rounded-3xl border border-slate-700/60 shadow-2xl">
-          <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-600 to-cyan-500 flex items-center justify-center text-white shadow-lg shadow-indigo-500/30 border border-white/20">
+        <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 glass-panel-3d p-6 rounded-3xl border border-slate-700/60 shadow-2xl">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-600 via-cyan-500 to-emerald-400 flex items-center justify-center text-white shadow-lg shadow-indigo-500/30 border border-white/20">
               <Zap className="w-6 h-6 animate-pulse" />
             </div>
             <div>
@@ -304,12 +416,12 @@ export default function Dashboard() {
                 <h1 className="text-2xl font-black text-white tracking-tight">
                   Dias & PRL Auto Joiner
                 </h1>
-                <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-mono font-bold border border-indigo-500/30">
-                  v2.0 3D ENGINE
+                <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-mono font-bold border border-indigo-500/30 uppercase">
+                  v2.0 Command Center
                 </span>
               </div>
               <p className="text-xs text-slate-400 font-medium">
-                Automated Diamond Rewards & PRL Google Sheets Processor
+                Automated Diamond Rewards & PRL Google Sheets Consolidation Platform
               </p>
             </div>
           </div>
@@ -322,7 +434,7 @@ export default function Dashboard() {
 
             <button
               onClick={() => signOut({ callbackUrl: "/" })}
-              className="p-3 rounded-xl bg-slate-900/60 hover:bg-slate-800 text-slate-400 hover:text-rose-400 border border-slate-700/70 transition-colors"
+              className="p-3 rounded-xl bg-slate-900/60 hover:bg-slate-800 text-slate-400 hover:text-rose-400 border border-slate-700/70 transition-colors cursor-pointer"
               title="Sign Out"
             >
               <LogOut className="w-4 h-4" />
@@ -352,7 +464,7 @@ export default function Dashboard() {
             </div>
             <div className="text-4xl font-black text-white tracking-tight">{totalRowsProcessed.toLocaleString()}</div>
             <p className="text-xs font-medium text-emerald-400 flex items-center gap-1 pt-1">
-              <CheckCircle2 className="w-3.5 h-3.5" /> Direct Google Sheets Consolidations
+              <CheckCircle2 className="w-3.5 h-3.5" /> Direct Google Sheets Integration
             </p>
           </div>
 
@@ -364,7 +476,7 @@ export default function Dashboard() {
             <div className="text-4xl font-black text-white tracking-tight">{runningCount}</div>
             <p className="text-xs font-semibold text-cyan-400 flex items-center gap-1 pt-1">
               <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
-              {runningCount > 0 ? "Active Syncs Running" : "Engine Standby Ready"}
+              {runningCount > 0 ? "Sync Operation Running" : "Engine Standby Ready"}
             </p>
           </div>
 
@@ -375,7 +487,7 @@ export default function Dashboard() {
             </div>
             <div className="text-4xl font-black text-white tracking-tight">MooGold</div>
             <p className="text-xs font-semibold text-slate-400 pt-1">
-              MLBB Server & User Verification Engine
+              Fast 10x Parallel User Verification
             </p>
           </div>
         </div>
@@ -397,7 +509,7 @@ export default function Dashboard() {
             <div className="flex items-center gap-1 bg-slate-950/60 p-1 rounded-xl border border-slate-800">
               <button
                 onClick={() => setTypeFilter("all")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                   typeFilter === "all" ? "bg-indigo-600 text-white shadow-md" : "text-slate-400 hover:text-white"
                 }`}
               >
@@ -405,7 +517,7 @@ export default function Dashboard() {
               </button>
               <button
                 onClick={() => setTypeFilter("diamonds")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                   typeFilter === "diamonds" ? "bg-amber-500/20 text-amber-300 border border-amber-500/30" : "text-slate-400 hover:text-white"
                 }`}
               >
@@ -413,7 +525,7 @@ export default function Dashboard() {
               </button>
               <button
                 onClick={() => setTypeFilter("prl")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                   typeFilter === "prl" ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30" : "text-slate-400 hover:text-white"
                 }`}
               >
@@ -425,7 +537,7 @@ export default function Dashboard() {
           <div className="flex items-center gap-2 justify-end">
             <button
               onClick={() => setViewLayout("grid")}
-              className={`p-2 rounded-xl transition-all ${
+              className={`p-2 rounded-xl transition-all cursor-pointer ${
                 viewLayout === "grid" ? "bg-slate-800 text-white border border-slate-700" : "text-slate-400 hover:text-white"
               }`}
               title="Grid View"
@@ -434,7 +546,7 @@ export default function Dashboard() {
             </button>
             <button
               onClick={() => setViewLayout("table")}
-              className={`p-2 rounded-xl transition-all ${
+              className={`p-2 rounded-xl transition-all cursor-pointer ${
                 viewLayout === "table" ? "bg-slate-800 text-white border border-slate-700" : "text-slate-400 hover:text-white"
               }`}
               title="Table View"
@@ -444,7 +556,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Jobs View (Grid Layout) */}
+        {/* Jobs Grid View */}
         {viewLayout === "grid" ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filteredJobs.map((job) => {
@@ -459,17 +571,10 @@ export default function Dashboard() {
                   key={job.id}
                   className="glass-card-3d p-6 rounded-3xl flex flex-col justify-between gap-6 border border-slate-700/60 relative overflow-hidden group"
                 >
-                  {/* Card Header */}
                   <div className="space-y-3">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <span
-                          className={
-                            job.type === "diamonds"
-                              ? "badge-diamonds mb-2"
-                              : "badge-prl mb-2"
-                          }
-                        >
+                        <span className={job.type === "diamonds" ? "badge-diamonds mb-2" : "badge-prl mb-2"}>
                           {job.type === "diamonds" ? "💎 Diamond Rewards" : "📋 Pre-Registered List"}
                         </span>
                         <h3 className="text-xl font-black text-white tracking-tight group-hover:text-indigo-400 transition-colors">
@@ -477,7 +582,6 @@ export default function Dashboard() {
                         </h3>
                       </div>
 
-                      {/* Status Badge */}
                       {isRunning ? (
                         <span className="badge-running">
                           <RefreshCw className="w-3 h-3 animate-spin" /> Syncing
@@ -488,7 +592,7 @@ export default function Dashboard() {
                         </span>
                       ) : status === "failed" || job.runs?.[0]?.status === "failed" ? (
                         <span className="badge-failed">
-                          <AlertTriangle className="w-3 h-3" /> Error
+                          <AlertTriangle className="w-3 h-3" /> Fault
                         </span>
                       ) : (
                         <span className="badge-pending">Idle</span>
@@ -496,27 +600,27 @@ export default function Dashboard() {
                     </div>
 
                     <p className="text-xs font-mono text-slate-400 truncate">
-                      Target: <span className="text-slate-200">{job.targetSpreadsheetName || "Default Consolidated"}</span>
+                      Target: <span className="text-slate-200">{job.targetSpreadsheetName || "Default Target"}</span>
                     </p>
                   </div>
 
                   {/* Execution Progress Bar */}
                   {isRunning && (
-                    <div className="space-y-2 p-3 rounded-2xl bg-slate-950/80 border border-indigo-500/30">
+                    <div className="space-y-2 p-3.5 rounded-2xl bg-slate-950/80 border border-indigo-500/30">
                       <div className="flex justify-between text-xs font-bold text-indigo-300">
-                        <span className="truncate">{live?.progressMessage || "Extracting CH entries..."}</span>
+                        <span className="truncate">{live?.progressMessage || "Processing CH sheets..."}</span>
                         <span>{live?.progress || 0}%</span>
                       </div>
-                      <div className="w-full h-2 rounded-full bg-slate-900 overflow-hidden">
+                      <div className="w-full h-2.5 rounded-full bg-slate-900 overflow-hidden">
                         <div
-                          className="h-full bg-gradient-to-r from-indigo-500 to-cyan-400 transition-all duration-300 rounded-full glow-indigo"
+                          className="h-full bg-gradient-to-r from-indigo-500 via-cyan-400 to-emerald-400 transition-all duration-300 rounded-full glow-indigo"
                           style={{ width: `${live?.progress || 0}%` }}
                         />
                       </div>
                     </div>
                   )}
 
-                  {/* Info Meta Footer */}
+                  {/* Metadata & Actions */}
                   <div className="space-y-3 pt-3 border-t border-slate-800 text-xs">
                     <div className="flex justify-between text-slate-400 font-medium">
                       <span>Last Execution:</span>
@@ -531,21 +635,21 @@ export default function Dashboard() {
                     </div>
 
                     {/* Actions Toolbar */}
-                    <div className="flex items-center justify-between pt-2 gap-2">
-                      <div className="flex items-center gap-2">
+                    <div className="flex flex-col gap-2 pt-2">
+                      <div className="flex items-center gap-2 w-full">
                         {isRunning ? (
                           <button
                             onClick={() => handleStopRun(job)}
                             disabled={isStopping}
-                            className="btn-danger !py-2 !px-3 text-xs"
+                            className="btn-danger flex-1 !py-2.5 text-xs"
                           >
-                            <Square className="w-3.5 h-3.5" /> Stop
+                            <Square className="w-3.5 h-3.5" /> Stop Sync
                           </button>
                         ) : (
                           <button
                             onClick={() => handleStartRun(job)}
                             disabled={isStarting}
-                            className="btn-primary !py-2 !px-4 text-xs"
+                            className="btn-primary flex-1 !py-2.5 text-xs"
                           >
                             {isStarting ? (
                               <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -558,44 +662,48 @@ export default function Dashboard() {
 
                         <button
                           onClick={() => openLogModal(job)}
-                          className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 transition-colors"
-                          title="View Logs & Terminal"
+                          className="px-3 py-2.5 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 hover:bg-indigo-500/20 hover:text-white transition-all text-xs font-bold flex items-center gap-1.5 shrink-0 cursor-pointer"
+                          title="Check Status, Health & Copy Summary"
                         >
-                          <Terminal className="w-4 h-4" />
+                          <Activity className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>Check Status</span>
                         </button>
                       </div>
 
-                      <div className="flex items-center gap-1">
-                        {job.targetSpreadsheetId && (
+                      <div className="flex items-center justify-between pt-1">
+                        {job.targetSpreadsheetId ? (
                           <a
                             href={`https://docs.google.com/spreadsheets/d/${job.targetSpreadsheetId}`}
                             target="_blank"
                             rel="noreferrer"
-                            className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-indigo-400 hover:text-indigo-300 border border-slate-700 transition-colors"
-                            title="Open Google Sheet"
+                            className="text-xs font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1.5"
                           >
-                            <ExternalLink className="w-4 h-4" />
+                            <ExternalLink className="w-3.5 h-3.5" /> Open Google Sheet
                           </a>
+                        ) : (
+                          <span className="text-[11px] text-slate-500">Sheet not generated yet</span>
                         )}
 
-                        <Link
-                          href={`/jobs/${job.id}/edit`}
-                          className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-700 transition-colors"
-                          title="Edit Job"
-                        >
-                          <Edit3 className="w-4 h-4" />
-                        </Link>
+                        <div className="flex items-center gap-1">
+                          <Link
+                            href={`/jobs/${job.id}/edit`}
+                            className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-700 transition-colors"
+                            title="Edit Job"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </Link>
 
-                        <button
-                          onClick={() => {
-                            setSelectedJob(job);
-                            setDeleteModalOpen(true);
-                          }}
-                          className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-rose-400 border border-slate-700 transition-colors"
-                          title="Delete Job"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                          <button
+                            onClick={() => {
+                              setSelectedJob(job);
+                              setDeleteModalOpen(true);
+                            }}
+                            className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-rose-400 border border-slate-700 transition-colors cursor-pointer"
+                            title="Delete Job"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -652,11 +760,12 @@ export default function Dashboard() {
                             >
                               {isRunning ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3 fill-current" />}
                             </button>
+
                             <button
                               onClick={() => openLogModal(job)}
-                              className="p-1.5 rounded-lg bg-slate-900 text-slate-300 border border-slate-700"
+                              className="px-3 py-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-bold text-xs hover:bg-indigo-500/20"
                             >
-                              <Terminal className="w-3.5 h-3.5" />
+                              Check Status
                             </button>
                           </div>
                         </td>
@@ -692,26 +801,304 @@ export default function Dashboard() {
         </p>
       </Modal>
 
-      {/* Log Terminal Modal */}
+      {/* Diagnostics, CH Health & Copy Summary Modal */}
       <Modal
         isOpen={errorsModalOpen}
         onClose={() => setErrorsModalOpen(false)}
-        title={`Execution Logs - ${selectedJob?.name}`}
-        maxWidth="max-w-3xl"
+        title={`Health & Execution Report - ${selectedJob?.name}`}
+        maxWidth="max-w-4xl"
       >
-        <div className="space-y-4">
-          <div className="p-4 rounded-2xl bg-slate-950 font-mono text-xs text-slate-300 border border-slate-800 space-y-2 max-h-[300px] overflow-y-auto">
-            {viewErrors.length === 0 ? (
-              <div className="text-slate-500 italic">No execution errors or logs recorded yet.</div>
-            ) : (
-              viewErrors.map((err, idx) => (
-                <div key={idx} className="p-2 rounded bg-slate-900/60 border border-slate-800 space-y-1">
-                  <div className="text-indigo-400 font-bold">[{err.chName}]</div>
-                  <div className="text-slate-300">{err.error}</div>
-                </div>
-              ))
-            )}
+        <div className="space-y-6">
+          {/* Modal Tab Navigation Matrix */}
+          <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+            <button
+              onClick={() => setActiveLogTab("overview")}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeLogTab === "overview"
+                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              Overview & Reports
+            </button>
+
+            <button
+              onClick={() => setActiveLogTab("chHealth")}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeLogTab === "chHealth"
+                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              CH Host Health ({viewStats.length})
+            </button>
+
+            <button
+              onClick={() => setActiveLogTab("duplicates")}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeLogTab === "duplicates"
+                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              Duplicates ({viewErrors.filter((err) => getErrorType(err) === "duplicate").length})
+            </button>
+
+            <button
+              onClick={() => setActiveLogTab("logs")}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeLogTab === "logs"
+                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              System Logs ({viewErrors.length})
+            </button>
           </div>
+
+          {/* TAB 1: OVERVIEW & COPY SUMMARY */}
+          {activeLogTab === "overview" && (
+            <div className="space-y-6">
+              {/* Health Banner */}
+              {viewErrors.filter((e) => ["accessibility", "dissolved"].includes(getErrorType(e))).length > 0 ? (
+                <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-start gap-3 text-rose-300 text-xs leading-relaxed">
+                  <AlertCircle className="w-5 h-5 text-rose-400 mt-0.5 shrink-0" />
+                  <div>
+                    <h4 className="font-extrabold text-rose-400 text-sm uppercase tracking-wider">
+                      Critical Sheet Access Faults Detected
+                    </h4>
+                    <p className="mt-1">
+                      Some Community Host response sheets cannot be accessed. Ensure all CH Google Sheets are shared as "Anyone with the link can view". Check the CH Host Health tab to locate affected sheets.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-start gap-3 text-emerald-300 text-xs leading-relaxed">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400 mt-0.5 shrink-0" />
+                  <div>
+                    <h4 className="font-extrabold text-emerald-400 text-sm uppercase tracking-wider">
+                      All CH Nodes Operating Nominally
+                    </h4>
+                    <p className="mt-1">No critical sheet access permissions or dissolved link errors encountered.</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons: Copy Summary & Export CSV */}
+              <div className="flex flex-wrap items-center justify-between gap-4 p-5 rounded-2xl bg-slate-950/80 border border-slate-800">
+                <div className="space-y-1">
+                  <h4 className="font-black text-white text-sm">Extraction Summary Actions</h4>
+                  <p className="text-xs text-slate-400">
+                    Copy a clean formatted report to share with CH Admins or export a CSV.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <button onClick={copyTextReport} className="btn-primary !py-2.5 text-xs">
+                    <Copy className="w-4 h-4" />
+                    <span>Copy Summary</span>
+                  </button>
+
+                  <button
+                    onClick={exportReportToCSV}
+                    className="px-4 py-2.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30 transition-all text-xs flex items-center gap-2 cursor-pointer"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Export CSV</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Summary Stats Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 text-center">
+                  <span className="text-xs text-slate-400 font-bold uppercase">Extracted Rows</span>
+                  <div className="text-2xl font-black text-emerald-400 mt-1">
+                    {selectedJob?.runs?.[0]?.rowsWritten || 0}
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 text-center">
+                  <span className="text-xs text-slate-400 font-bold uppercase">Critical Issues</span>
+                  <div className="text-2xl font-black text-rose-400 mt-1">
+                    {viewErrors.filter((e) => ["accessibility", "dissolved"].includes(getErrorType(e))).length}
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 text-center">
+                  <span className="text-xs text-slate-400 font-bold uppercase">Duplicates Flagged</span>
+                  <div className="text-2xl font-black text-amber-400 mt-1">
+                    {viewErrors.filter((e) => getErrorType(e) === "duplicate").length}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: CH HOST HEALTH */}
+          {activeLogTab === "chHealth" && (
+            <div className="space-y-4 max-h-[380px] overflow-y-auto pr-1">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-950 text-slate-400 uppercase tracking-wider font-bold border-b border-slate-800">
+                  <tr>
+                    <th className="p-3">CH Nickname</th>
+                    <th className="p-3 text-center">Status</th>
+                    <th className="p-3 text-center">Players Extracted</th>
+                    <th className="p-3">Issue Details</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {viewStats.map((stat, i) => {
+                    const chErrs = viewErrors.filter((e) => e.chName === stat.chName);
+                    const hasCritical = chErrs.some((e) => ["accessibility", "dissolved"].includes(getErrorType(e)));
+                    const hasDup = chErrs.some((e) => getErrorType(e) === "duplicate");
+
+                    return (
+                      <tr key={i} className="hover:bg-slate-900/50">
+                        <td className="p-3 font-bold text-white">{stat.chName}</td>
+                        <td className="p-3 text-center">
+                          {hasCritical ? (
+                            <span className="badge-failed">Critical</span>
+                          ) : hasDup ? (
+                            <span className="badge-diamonds">Duplicate</span>
+                          ) : (
+                            <span className="badge-success">Normal</span>
+                          )}
+                        </td>
+                        <td className="p-3 text-center font-mono font-bold text-emerald-400">{stat.count}</td>
+                        <td className="p-3">
+                          {chErrs.length === 0 ? (
+                            <span className="text-slate-500 italic">None</span>
+                          ) : (
+                            <div className="space-y-1 font-mono text-[11px] text-rose-300">
+                              {chErrs.map((e, idx) => (
+                                <div key={idx}>• {e.error}</div>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* TAB 3: DUPLICATES */}
+          {activeLogTab === "duplicates" && (
+            <div className="space-y-4 max-h-[380px] overflow-y-auto pr-1">
+              {viewErrors.filter((err) => getErrorType(err) === "duplicate").length === 0 ? (
+                <div className="text-center py-12 text-slate-500 text-xs">
+                  <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto mb-2 opacity-50" />
+                  No duplicate player entries detected in this run.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {viewErrors
+                    .filter((err) => getErrorType(err) === "duplicate")
+                    .map((err, i) => {
+                      const parsed = parseDuplicateError(err);
+                      if (!parsed) {
+                        return (
+                          <div key={i} className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs">
+                            <div className="font-extrabold text-white mb-1">{err.chName}</div>
+                            <div className="font-mono text-amber-300/90">{err.error}</div>
+                          </div>
+                        );
+                      }
+
+                      const isFake = parsed.isFakedServer;
+
+                      return (
+                        <div
+                          key={i}
+                          className={`p-4 rounded-2xl border text-xs space-y-3 relative overflow-hidden ${
+                            isFake
+                              ? "bg-rose-500/10 border-rose-500/30"
+                              : "bg-amber-500/10 border-amber-500/30"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-black text-white text-sm">{parsed.name}</span>
+                            <span
+                              className={`text-[10px] font-mono font-extrabold px-2 py-0.5 rounded border uppercase ${
+                                isFake
+                                  ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
+                                  : "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                              }`}
+                            >
+                              {isFake ? "🚨 FAKE SERVER DUPLICATE" : "MLBB PLAYER"}
+                            </span>
+                          </div>
+
+                          <div className="font-mono text-[11px] text-slate-300 space-y-1">
+                            <div>
+                              UID: <strong className="text-white">{parsed.uid}</strong> | Server:{" "}
+                              <strong className="text-white">{parsed.server}</strong>
+                            </div>
+                            {isFake && parsed.prevServer && (
+                              <div className="text-rose-400 font-bold">
+                                Real Server: {parsed.prevServer} (Spoofed: {parsed.server})
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-[11px]">
+                            <div>
+                              <span className="text-slate-500 font-bold block text-[9px] uppercase">Original CH</span>
+                              <span className="font-bold text-indigo-400">{parsed.prevCh}</span>
+                            </div>
+                            <span className="text-slate-500">➡️</span>
+                            <div className="text-right">
+                              <span className="text-slate-500 font-bold block text-[9px] uppercase">Copied By CH</span>
+                              <span className={`font-bold ${isFake ? "text-rose-400" : "text-amber-400"}`}>
+                                {parsed.currCh}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 4: SYSTEM LOGS */}
+          {activeLogTab === "logs" && (
+            <div className="space-y-4">
+              <input
+                type="text"
+                placeholder="Search logs by CH or error message..."
+                value={modalSearch}
+                onChange={(e) => setModalSearch(e.target.value)}
+                className="input-field !py-2.5 !text-xs"
+              />
+
+              <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                {viewErrors.length === 0 ? (
+                  <p className="text-slate-500 italic text-center py-8 text-xs">No execution logs or errors recorded.</p>
+                ) : (
+                  viewErrors
+                    .filter(
+                      (err) =>
+                        err.chName.toLowerCase().includes(modalSearch.toLowerCase()) ||
+                        err.error.toLowerCase().includes(modalSearch.toLowerCase())
+                    )
+                    .map((err, i) => (
+                      <div
+                        key={i}
+                        className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-start gap-3 text-xs"
+                      >
+                        <span className="font-extrabold text-indigo-400 shrink-0">[{err.chName}]</span>
+                        <span className="font-mono text-slate-300">{err.error}</span>
+                      </div>
+                    ))
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </Modal>
     </div>

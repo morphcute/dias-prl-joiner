@@ -2,6 +2,9 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -21,18 +24,27 @@ export async function GET(
     orderBy: { startedAt: "desc" },
   });
 
+  const responseHeaders = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+  };
+
   if (!run) {
-    return NextResponse.json({
-      status: "idle",
-      progress: 0,
-      progressMessage: null,
-    });
+    return NextResponse.json(
+      {
+        status: "idle",
+        progress: 0,
+        progressMessage: null,
+      },
+      { headers: responseHeaders }
+    );
   }
 
   // Stale Run Recovery: If run is in "running" status but hasn't updated in > 2.5 minutes (150,000 ms),
-  // it means the background HTTP execution timed out or socket dropped. Auto-mark it as failed.
+  // auto-mark it as failed.
   if (run.status === "running") {
-    const STALE_TIMEOUT_MS = 150000; // 2.5 minutes
+    const STALE_TIMEOUT_MS = 150000;
     const lastUpdate = new Date((run as any).updatedAt || run.startedAt).getTime();
     const elapsed = Date.now() - lastUpdate;
 
@@ -43,26 +55,32 @@ export async function GET(
         data: {
           status: "failed",
           progress: 100,
-          progressMessage: "Sync connection timed out. Click 'Run Engine' to auto-resume.",
+          progressMessage: "Sync connection timed out. Click 'Sync Now' to resume.",
           completedAt: new Date(),
         },
       });
 
-      return NextResponse.json({
-        status: updatedRun.status,
-        progress: updatedRun.progress,
-        progressMessage: updatedRun.progressMessage,
-        errors: updatedRun.errors,
-        rowsWritten: updatedRun.rowsWritten,
-      });
+      return NextResponse.json(
+        {
+          status: updatedRun.status,
+          progress: updatedRun.progress,
+          progressMessage: updatedRun.progressMessage,
+          errors: updatedRun.errors,
+          rowsWritten: updatedRun.rowsWritten,
+        },
+        { headers: responseHeaders }
+      );
     }
   }
 
-  return NextResponse.json({
-    status: run.status,
-    progress: run.progress,
-    progressMessage: run.progressMessage,
-    errors: run.errors,
-    rowsWritten: run.rowsWritten,
-  });
+  return NextResponse.json(
+    {
+      status: run.status,
+      progress: run.progress,
+      progressMessage: run.progressMessage,
+      errors: run.errors,
+      rowsWritten: run.rowsWritten,
+    },
+    { headers: responseHeaders }
+  );
 }
