@@ -4,7 +4,7 @@ import { google } from "googleapis";
 import { getUserAuth } from "./google";
 import { resolveUrl, ResolveResult } from "./url-resolver";
 import { verifyMlbbId } from "./mlbb";
-import { isFormulaOrError, adjustColumnsBasedOnData, detectReportingSheetColumns } from "./validations";
+import { isFormulaOrError, adjustColumnsBasedOnData, detectReportingSheetColumns, isAgeHeader } from "./validations";
 import { withRetry } from "./google-retry";
 
 interface ChError {
@@ -116,15 +116,17 @@ async function getTeamMapFromResponseSheet(
 ): Promise<{
   teamNames: string[];
   playerTeamMap: Map<string, string>;
+  playerAgeMap: Map<string, string>;
 }> {
   const teamNames: string[] = [];
   const playerTeamMap = new Map<string, string>();
+  const playerAgeMap = new Map<string, string>();
 
-  if (!responseSheetUrl) return { teamNames, playerTeamMap };
+  if (!responseSheetUrl) return { teamNames, playerTeamMap, playerAgeMap };
 
   try {
     const resResult = await resolveUrl(responseSheetUrl);
-    if ("error" in resResult) return { teamNames, playerTeamMap };
+    if ("error" in resResult) return { teamNames, playerTeamMap, playerAgeMap };
 
     const resSpreadsheetId = (resResult as ResolveResult).spreadsheetId;
     const resSheet = await withRetry(
@@ -138,7 +140,7 @@ async function getTeamMapFromResponseSheet(
     );
 
     const rows = (resSheet as any)?.data?.values || [];
-    if (rows.length < 2) return { teamNames, playerTeamMap };
+    if (rows.length < 2) return { teamNames, playerTeamMap, playerAgeMap };
 
     // Find header row in Response Sheet (usually row 0)
     let headerRowIdx = -1;
@@ -146,6 +148,7 @@ async function getTeamMapFromResponseSheet(
     const nameCols: number[] = [];
     const uidCols: number[] = [];
     const ignCols: number[] = [];
+    const ageCols: number[] = [];
 
     for (let r = 0; r < Math.min(rows.length, 5); r++) {
       const row = rows[r];
@@ -163,6 +166,8 @@ async function getTeamMapFromResponseSheet(
           val.includes("SQUAD NAME")
         ) {
           teamNameCol = c;
+        } else if (isAgeHeader(val)) {
+          ageCols.push(c);
         } else if (val.includes("UID") || val.includes("USER ID") || val.includes("GAME ID")) {
           uidCols.push(c);
         } else if (val.includes("IGN") || val.includes("GAME NAME") || val.includes("NICKNAME")) {
@@ -171,37 +176,43 @@ async function getTeamMapFromResponseSheet(
           nameCols.push(c);
         }
       }
-      if (teamNameCol !== -1) {
+      if (teamNameCol !== -1 || ageCols.length > 0) {
         headerRowIdx = r;
         break;
       }
     }
 
     if (headerRowIdx === -1 || teamNameCol === -1) {
-      teamNameCol = 1;
+      if (teamNameCol === -1) teamNameCol = 1;
       headerRowIdx = 0;
     }
 
-    // Extract team names and build player -> team mapping
+    // Extract team names and build player -> team mapping & player -> age mapping
     for (let r = headerRowIdx + 1; r < rows.length; r++) {
       const row = rows[r];
-      const teamName = String(row[teamNameCol] ?? "").trim();
-      if (!teamName) continue;
+      const teamName = teamNameCol !== -1 ? String(row[teamNameCol] ?? "").trim() : "";
+      if (teamName) {
+        teamNames.push(teamName);
+      }
 
-      teamNames.push(teamName);
+      let rowAge = "";
+      if (ageCols.length > 0) {
+        rowAge = String(row[ageCols[0]] ?? "").trim();
+      }
 
       for (const colIdx of [...uidCols, ...ignCols, ...nameCols]) {
         const pVal = String(row[colIdx] ?? "").trim().toLowerCase();
         if (pVal && pVal.length >= 2) {
-          playerTeamMap.set(pVal, teamName);
+          if (teamName) playerTeamMap.set(pVal, teamName);
+          if (rowAge) playerAgeMap.set(pVal, rowAge);
         }
       }
     }
   } catch (e) {
-    console.log("[ResponseSheet] Team extraction notice:", e);
+    console.log("[ResponseSheet] Team/Age extraction notice:", e);
   }
 
-  return { teamNames, playerTeamMap };
+  return { teamNames, playerTeamMap, playerAgeMap };
 }
 
 
@@ -241,8 +252,8 @@ export async function syncPrl(job: JoinerJob, runId: string) {
   let nextDupGroupIdx = 0;
   const seenUids = new Map<string, { chName: string; server: string; rowIdx: number; baseDupRowData: string[]; addedToDupSheet?: boolean }>();
 
-  // Header: CH, Players Name, Players IGN, Server, UID (NO "No." column)
-  const HEADER = ["CH", "Players Name", "Players IGN", "Server", "UID"];
+  // Header: CH, Players Name, Age, Players IGN, Server, UID (NO "No." column)
+  const HEADER = ["CH", "Players Name", "Age", "Players IGN", "Server", "UID"];
   if (job.validationEnabled) {
     HEADER.push("Status");
   }
@@ -418,10 +429,10 @@ export async function syncPrl(job: JoinerJob, runId: string) {
     return { count: "0", source: "none" };
   };
 
-  // Response Sheet Cache Map for fast on-demand team name lookup
-  const responseSheetCache = new Map<string, { teamNames: string[]; playerTeamMap: Map<string, string> }>();
+  // Response Sheet Cache Map for fast on-demand team name and age lookup
+  const responseSheetCache = new Map<string, { teamNames: string[]; playerTeamMap: Map<string, string>; playerAgeMap: Map<string, string> }>();
   const fetchChTeamMap = async (resUrl?: string) => {
-    if (!resUrl) return { teamNames: [], playerTeamMap: new Map() };
+    if (!resUrl) return { teamNames: [], playerTeamMap: new Map(), playerAgeMap: new Map() };
     if (responseSheetCache.has(resUrl)) return responseSheetCache.get(resUrl)!;
     const res = await getTeamMapFromResponseSheet(sheets, resUrl);
     responseSheetCache.set(resUrl, res);
@@ -474,7 +485,7 @@ export async function syncPrl(job: JoinerJob, runId: string) {
 
       // Find header row by looking for NAME/SERVER/UID columns
       let headerRowIdx = -1;
-      let nameCol = -1, ignCol = -1, serverCol = -1, uidCol = -1, teamCol = -1;
+      let nameCol = -1, ageCol = -1, ignCol = -1, serverCol = -1, uidCol = -1, teamCol = -1;
 
       for (let r = 0; r < Math.min(rows.length, 30); r++) {
         const row = rows[r];
@@ -482,13 +493,15 @@ export async function syncPrl(job: JoinerJob, runId: string) {
           const val = String(row[c] ?? "").trim().toUpperCase();
           if (val === "") continue;
 
-          if ((val.includes("NAME") || val.includes("PLAYER")) && !val.includes("IGN") && !val.includes("GAME") && !val.includes("TEAM") && !val.includes("SQUAD")) {
+          if (isAgeHeader(val)) {
+            ageCol = c;
+          } else if ((val.includes("NAME") || val.includes("PLAYER") || val.includes("CAPTAIN") || val.includes("FULLNAME") || val.includes("FULL NAME")) && !val.includes("IGN") && !val.includes("GAME") && !val.includes("TEAM") && !val.includes("SQUAD") && !isAgeHeader(val)) {
             nameCol = c;
-          } else if (val === "IGN" || val.includes("IGN") || val.includes("GAME NAME")) {
+          } else if (val === "IGN" || val.includes("IGN") || val.includes("GAME NAME") || val.includes("IN GAME NAME") || val.includes("IN-GAME NAME")) {
             ignCol = c;
-          } else if (val === "SERVER" || val.includes("SERVER")) {
+          } else if (val === "SERVER" || val.includes("SERVER") || val.includes("ZONE") || val === "ZONE ID" || val === "SERVER ID") {
             serverCol = c;
-          } else if (val === "UID" || val.includes("UID") || val.includes("USER ID") || val === "ID") {
+          } else if (val === "UID" || val.includes("UID") || val.includes("USER ID") || val === "ID" || val.includes("GAME ID") || val.includes("ACCOUNT ID")) {
             uidCol = c;
           } else if (
             val === "YOUR TEAM NAME" ||
@@ -507,7 +520,7 @@ export async function syncPrl(job: JoinerJob, runId: string) {
           headerRowIdx = r;
           break;
         }
-        nameCol = -1; ignCol = -1; serverCol = -1; uidCol = -1; teamCol = -1;
+        nameCol = -1; ageCol = -1; ignCol = -1; serverCol = -1; uidCol = -1; teamCol = -1;
       }
 
       if (headerRowIdx === -1 || nameCol === -1) {
@@ -520,7 +533,8 @@ export async function syncPrl(job: JoinerJob, runId: string) {
         nameCol,
         ignCol,
         serverCol,
-        uidCol
+        uidCol,
+        ageCol,
       });
       
       if (adjusted.corrected) {
@@ -528,6 +542,7 @@ export async function syncPrl(job: JoinerJob, runId: string) {
         ignCol = adjusted.ignCol;
         serverCol = adjusted.serverCol;
         uidCol = adjusted.uidCol;
+        if (adjusted.ageCol !== undefined) ageCol = adjusted.ageCol;
         errors.push({
           chName,
           error: "Auto-corrected column mapping: columns were misaligned in headers",
@@ -542,6 +557,7 @@ export async function syncPrl(job: JoinerJob, runId: string) {
       for (let r = headerRowIdx + 1; r < rows.length; r++) {
         const row = rows[r];
         let name = String(row[nameCol] ?? "").trim();
+        let age = ageCol !== -1 ? String(row[ageCol] ?? "").trim() : "";
         let ign = ignCol !== -1 ? String(row[ignCol] ?? "").trim() : "";
         let server = String(row[serverCol] ?? "").trim();
         let uid = String(row[uidCol] ?? "").trim();
@@ -549,7 +565,13 @@ export async function syncPrl(job: JoinerJob, runId: string) {
         if (!name && !uid) continue;
 
         // Skip formula placeholder rows and spreadsheet errors
-        if (isFormulaOrError(name) || isFormulaOrError(server) || isFormulaOrError(uid) || (ignCol !== -1 && isFormulaOrError(ign))) {
+        if (
+          isFormulaOrError(name) ||
+          isFormulaOrError(server) ||
+          isFormulaOrError(uid) ||
+          (ignCol !== -1 && isFormulaOrError(ign)) ||
+          (ageCol !== -1 && isFormulaOrError(age))
+        ) {
           continue;
         }
 
@@ -698,19 +720,30 @@ export async function syncPrl(job: JoinerJob, runId: string) {
 
         let teamName = teamCol !== -1 ? String(row[teamCol] ?? "").trim() : "";
 
-        // If teamName is empty and a response sheet URL exists, fetch team map on-demand with caching
-        if (!teamName && responseSheetUrl) {
-          const { teamNames: respTeamNames, playerTeamMap } = await fetchChTeamMap(responseSheetUrl);
-          if (uid && playerTeamMap.has(uid.toLowerCase())) {
-            teamName = playerTeamMap.get(uid.toLowerCase())!;
-          } else if (ign && playerTeamMap.has(ign.toLowerCase())) {
-            teamName = playerTeamMap.get(ign.toLowerCase())!;
-          } else if (name && playerTeamMap.has(name.toLowerCase())) {
-            teamName = playerTeamMap.get(name.toLowerCase())!;
-          } else if (respTeamNames.length > 0) {
-            const teamIdx = Math.floor(validRowCount / gameModeMult);
-            if (teamIdx < respTeamNames.length) {
-              teamName = respTeamNames[teamIdx];
+        // If teamName or age is empty and a response sheet URL exists, fetch team/age map on-demand with caching
+        if ((!teamName || !age) && responseSheetUrl) {
+          const { teamNames: respTeamNames, playerTeamMap, playerAgeMap } = await fetchChTeamMap(responseSheetUrl);
+          if (!teamName) {
+            if (uid && playerTeamMap.has(uid.toLowerCase())) {
+              teamName = playerTeamMap.get(uid.toLowerCase())!;
+            } else if (ign && playerTeamMap.has(ign.toLowerCase())) {
+              teamName = playerTeamMap.get(ign.toLowerCase())!;
+            } else if (name && playerTeamMap.has(name.toLowerCase())) {
+              teamName = playerTeamMap.get(name.toLowerCase())!;
+            } else if (respTeamNames.length > 0) {
+              const teamIdx = Math.floor(validRowCount / gameModeMult);
+              if (teamIdx < respTeamNames.length) {
+                teamName = respTeamNames[teamIdx];
+              }
+            }
+          }
+          if (!age) {
+            if (uid && playerAgeMap.has(uid.toLowerCase())) {
+              age = playerAgeMap.get(uid.toLowerCase())!;
+            } else if (ign && playerAgeMap.has(ign.toLowerCase())) {
+              age = playerAgeMap.get(ign.toLowerCase())!;
+            } else if (name && playerAgeMap.has(name.toLowerCase())) {
+              age = playerAgeMap.get(name.toLowerCase())!;
             }
           }
         }
@@ -769,7 +802,7 @@ export async function syncPrl(job: JoinerJob, runId: string) {
 
             // Push current duplicate occurrence to duplicateRowsList
             duplicateRowsList.push({
-              rowData: [chName, name, ign, server, uid, teamName, dupWith, dupType],
+              rowData: [chName, name, age, ign, server, uid, teamName, dupWith, dupType],
               groupIdx,
             });
 
@@ -783,13 +816,13 @@ export async function syncPrl(job: JoinerJob, runId: string) {
               chName,
               server,
               rowIdx: 1 + allRows.length,
-              baseDupRowData: [chName, name, ign, server, uid, teamName],
+              baseDupRowData: [chName, name, age, ign, server, uid, teamName],
               addedToDupSheet: false,
             });
           }
         }
 
-        const rowData = [!chHeaderAdded ? `CH ${chName}` : "", name, ign, server, uid];
+        const rowData = [!chHeaderAdded ? `CH ${chName}` : "", name, age, ign, server, uid];
         if (job.validationEnabled) {
           rowData.push("");
         }
@@ -811,7 +844,8 @@ export async function syncPrl(job: JoinerJob, runId: string) {
       const isOnsite = gameModeStr === "Onsite 5v5";
 
       const minPlayers = isOnsite ? 25 : 10 * gameModeMult;
-      const requiredThreshold = Math.max(1, minPlayers - 4); // Allow up to 4 players to have failed/missing entries
+      // Onsite 5v5 requires a strict minimum of 25 players (5 teams). Standard modes allow up to 4 missing (e.g., 46 for 5v5 / 10 teams).
+      const requiredThreshold = isOnsite ? 25 : Math.max(1, minPlayers - 4);
 
       if (validRowCount < requiredThreshold) {
         const teamsRes = await getRegisteredTeamsCount(resolvedEntries[i]);
@@ -819,7 +853,8 @@ export async function syncPrl(job: JoinerJob, runId: string) {
         if (teamsRes.count !== "0" || teamsRes.source === "error") {
           teamsMessage = `.(Teams in responses sheet: ${teamsRes.count})`;
         }
-        errors.push({ chName, error: `Dissolved Tournament: only ${validRowCount} valid players found (Mode: ${gameModeStr}, Target: ${minPlayers}, Minimum allowed: ${requiredThreshold})${teamsMessage}` });
+        const targetTeams = isOnsite ? 5 : 10;
+        errors.push({ chName, error: `Dissolved Tournament: only ${validRowCount} valid players found (Mode: ${gameModeStr}, Target: ${minPlayers} players [${targetTeams} teams], Minimum allowed: ${requiredThreshold})${teamsMessage}` });
       }
 
     } catch (error: any) {
@@ -849,14 +884,14 @@ export async function syncPrl(job: JoinerJob, runId: string) {
       const batch = allRows.slice(i, i + BATCH_SIZE);
       await Promise.allSettled(
         batch.map(async (row) => {
-          const server = row[3]; // Server
-          const uid = row[4]; // UID
+          const server = row[4]; // Server (Index 4)
+          const uid = row[5]; // UID (Index 5)
           // Skip the CH header rows which have empty UID
           if (server && uid && row[0] === "") {
             try {
               const result = await verifyMlbbId(String(uid), String(server));
               if (result.success && result.ign) {
-                row[2] = result.ign; // Update IGN with verified name
+                row[3] = result.ign; // Update IGN with verified name (Index 3)
                 row[statusColIdx] = "Verified";
               } else if (result.error === "Player not found") {
                 row[statusColIdx] = "Not Found";
@@ -913,7 +948,7 @@ export async function syncPrl(job: JoinerJob, runId: string) {
     targetSheetId = targetSheet.properties?.sheetId || 0;
   }
 
-  const endCol = job.validationEnabled ? "F" : "E";
+  const endCol = job.validationEnabled ? "G" : "F";
   await sheets.spreadsheets.values.clear({
     spreadsheetId: targetId,
     range: `'${TAB_NAME}'!A:${endCol}`,
@@ -930,7 +965,7 @@ export async function syncPrl(job: JoinerJob, runId: string) {
 
   // Step 5b: Create / Update "Duplicates" tab in target spreadsheet
   const DUP_TAB_NAME = "Duplicates";
-  const DUP_HEADER = ["CH", "Players Name", "Players IGN", "Server", "UID", "TEAM NAME", "DUPLICATED WITH CH", "DUPLICATE TYPE"];
+  const DUP_HEADER = ["CH", "Players Name", "Age", "Players IGN", "Server", "UID", "TEAM NAME", "DUPLICATED WITH CH", "DUPLICATE TYPE"];
   const rawDupRowValues = duplicateRowsList.map(item => item.rowData);
   const finalDupRows = [DUP_HEADER, ...rawDupRowValues];
 
@@ -949,13 +984,13 @@ export async function syncPrl(job: JoinerJob, runId: string) {
 
   await sheets.spreadsheets.values.clear({
     spreadsheetId: targetId,
-    range: `'${DUP_TAB_NAME}'!A:H`,
+    range: `'${DUP_TAB_NAME}'!A:I`,
   });
 
   if (finalDupRows.length > 0) {
     await sheets.spreadsheets.values.update({
       spreadsheetId: targetId,
-      range: `'${DUP_TAB_NAME}'!A1:H`,
+      range: `'${DUP_TAB_NAME}'!A1:I`,
       valueInputOption: "USER_ENTERED",
       requestBody: { values: finalDupRows },
     });
@@ -1171,7 +1206,21 @@ export async function syncPrl(job: JoinerJob, runId: string) {
   });
   requests.push({
     updateDimensionProperties: {
-      range: { sheetId: targetSheetId, dimension: "COLUMNS", startIndex: 1, endIndex: 3 },
+      range: { sheetId: targetSheetId, dimension: "COLUMNS", startIndex: 1, endIndex: 2 },
+      properties: { pixelSize: 200 },
+      fields: "pixelSize",
+    },
+  });
+  requests.push({
+    updateDimensionProperties: {
+      range: { sheetId: targetSheetId, dimension: "COLUMNS", startIndex: 2, endIndex: 3 },
+      properties: { pixelSize: 80 },
+      fields: "pixelSize",
+    },
+  });
+  requests.push({
+    updateDimensionProperties: {
+      range: { sheetId: targetSheetId, dimension: "COLUMNS", startIndex: 3, endIndex: 4 },
       properties: { pixelSize: 200 },
       fields: "pixelSize",
     },

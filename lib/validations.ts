@@ -55,19 +55,31 @@ export function isFormulaOrError(str: string): boolean {
 }
 
 /**
+ * Checks if a header value corresponds to player Age.
+ */
+export function isAgeHeader(val: string): boolean {
+  const v = val.toUpperCase().trim();
+  if (v === "AGE" || v === "EDAD" || v === "YRS OLD" || v === "YEARS OLD" || v === "Y/O" || v === "AGE / EDAD" || v === "EDAD / AGE") return true;
+  if (/\b(AGE|EDAD|YEARS OLD|YRS OLD)\b/.test(v)) return true;
+  if (v.includes("PLAYER AGE") || v.includes("PLAYERS AGE") || v.includes("PLAYER'S AGE") || v.includes("YOUR AGE") || v.includes("CAPTAIN AGE") || v.includes("MEMBER AGE")) return true;
+  if (v.includes("HOW OLD") || v.includes("BIRTH") || v.includes("DOB")) return true;
+  return false;
+}
+
+/**
  * Samples data rows below the header row to verify and correct column indexes.
  * Resolves misaligned headers or swapped columns by analyzing the actual data types.
  */
 export function adjustColumnsBasedOnData(
   rows: string[][],
   headerRowIdx: number,
-  initialMapping: { nameCol: number; ignCol: number; serverCol: number; uidCol: number }
-): { nameCol: number; ignCol: number; serverCol: number; uidCol: number; corrected: boolean } {
+  initialMapping: { nameCol: number; ignCol: number; serverCol: number; uidCol: number; ageCol?: number }
+): { nameCol: number; ignCol: number; serverCol: number; uidCol: number; ageCol?: number; corrected: boolean } {
   const mapping = { ...initialMapping };
   
-  // Filter out any columns that weren't mapped at all
+  // Filter out any columns that weren't mapped at all or that are the age column
   const colsToAnalyze = [mapping.nameCol, mapping.ignCol, mapping.serverCol, mapping.uidCol].filter(
-    c => c !== -1
+    c => c !== -1 && c !== mapping.ageCol
   );
   if (colsToAnalyze.length < 3) {
     return { ...mapping, corrected: false };
@@ -178,6 +190,7 @@ export function adjustColumnsBasedOnData(
     ignCol: newIgnCol,
     serverCol: newServerCol,
     uidCol: newUidCol,
+    ageCol: mapping.ageCol,
     corrected: mappingChanged,
   };
 }

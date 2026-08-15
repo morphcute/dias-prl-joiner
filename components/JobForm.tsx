@@ -209,7 +209,7 @@ export function JobForm({ editJobId }: JobFormProps) {
                   <span className="text-xl">📋</span>
                   <div>
                     <span className="block text-sm font-bold text-slate-50">Pre-Registered List</span>
-                    <span className="block text-[10px] text-slate-500 font-mono mt-0.5">Players Name, IGN, Server, UID</span>
+                    <span className="block text-[10px] text-slate-500 font-mono mt-0.5">Players Name, Age, IGN, Server, UID</span>
                   </div>
                 </label>
               </div>
@@ -233,7 +233,7 @@ export function JobForm({ editJobId }: JobFormProps) {
                 <svg className="w-3.5 h-3.5 text-slate-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                 <p className="text-[11px] text-slate-400 leading-tight">
                   Sets extraction columns and constraints.<br/>
-                  <span className="text-slate-300 font-medium">Standard = 50 min. Onsite = 25 min.</span>
+                  <span className="text-slate-300 font-medium">Standard 5v5 = 46 min (10 teams). Onsite 5v5 = 25 min (5 teams).</span>
                 </p>
               </div>
             </div>
