@@ -66,13 +66,24 @@ async function readChEntriesFromReportingSheet(
 
     if (!chNickname) continue;
 
-    if (
-      !link ||
+    // Check if there is a link
+    const isNoLink = !link;
+    const isInvalidLink =
+      isNoLink ||
       link.toUpperCase() === "DISSOLVED" ||
       link.toUpperCase().includes("NO EVENT") ||
       link.toUpperCase() === "EVENT" ||
-      (!link.startsWith("http") && !link.startsWith("www"))
-    ) {
+      (!link.startsWith("http") && !link.startsWith("www"));
+
+    if (isInvalidLink) {
+      const errorDetail = isNoLink
+        ? "No link provided (Did not follow the rules)"
+        : `Invalid link: "${link}" (Did not follow the rules)`;
+      errors.push({
+        chName: chNickname,
+        error: errorDetail,
+        type: "rule_violation"
+      });
       continue;
     }
 
@@ -90,6 +101,97 @@ async function readChEntriesFromReportingSheet(
   console.log(`[ReportingSheet] Found ${entries.length} valid CH entries with links dynamically`);
 
   return { entries, errors };
+}
+
+function extractPlayerSlotNumber(header: string): number | null {
+  const h = header.toUpperCase().trim();
+  if (
+    /\b(1ST|FIRST|CAPTAIN|LEADER)\b/.test(h) ||
+    /\bPLAYER\s*['’]?\s*1\b/.test(h) ||
+    /\bPLAYER\s*1['’]?S\b/.test(h) ||
+    /\b1ST\s*PLAYER\b/.test(h) ||
+    /\b1ST\s*MEMBER\b/.test(h)
+  ) {
+    return 1;
+  }
+  if (
+    /\b(2ND|SECOND)\b/.test(h) ||
+    /\bPLAYER\s*['’]?\s*2\b/.test(h) ||
+    /\bPLAYER\s*2['’]?S\b/.test(h) ||
+    /\b2ND\s*PLAYER\b/.test(h) ||
+    /\b2ND\s*MEMBER\b/.test(h)
+  ) {
+    return 2;
+  }
+  if (
+    /\b(3RD|THIRD)\b/.test(h) ||
+    /\bPLAYER\s*['’]?\s*3\b/.test(h) ||
+    /\bPLAYER\s*3['’]?S\b/.test(h) ||
+    /\b3RD\s*PLAYER\b/.test(h) ||
+    /\b3RD\s*MEMBER\b/.test(h)
+  ) {
+    return 3;
+  }
+  if (
+    /\b(4TH|FOURTH)\b/.test(h) ||
+    /\bPLAYER\s*['’]?\s*4\b/.test(h) ||
+    /\bPLAYER\s*4['’]?S\b/.test(h) ||
+    /\b4TH\s*PLAYER\b/.test(h) ||
+    /\b4TH\s*MEMBER\b/.test(h)
+  ) {
+    return 4;
+  }
+  if (
+    /\b(5TH|FIFTH)\b/.test(h) ||
+    /\bPLAYER\s*['’]?\s*5\b/.test(h) ||
+    /\bPLAYER\s*5['’]?S\b/.test(h) ||
+    /\b5TH\s*PLAYER\b/.test(h) ||
+    /\b5TH\s*MEMBER\b/.test(h)
+  ) {
+    return 5;
+  }
+  if (
+    /\b(6TH|SIXTH|RESERVE|SUB|SUBSTITUTE)\b/.test(h) ||
+    /\bPLAYER\s*['’]?\s*6\b/.test(h) ||
+    /\bPLAYER\s*6['’]?S\b/.test(h) ||
+    /\b6TH\s*PLAYER\b/.test(h) ||
+    /\b6TH\s*MEMBER\b/.test(h)
+  ) {
+    return 6;
+  }
+  if (
+    /\b(7TH|SEVENTH)\b/.test(h) ||
+    /\bPLAYER\s*['’]?\s*7\b/.test(h) ||
+    /\bPLAYER\s*7['’]?S\b/.test(h) ||
+    /\b7TH\s*PLAYER\b/.test(h)
+  ) {
+    return 7;
+  }
+  if (
+    /\b(8TH|EIGHTH)\b/.test(h) ||
+    /\bPLAYER\s*['’]?\s*8\b/.test(h)
+  ) {
+    return 8;
+  }
+  if (
+    /\b(9TH|NINTH)\b/.test(h) ||
+    /\bPLAYER\s*['’]?\s*9\b/.test(h)
+  ) {
+    return 9;
+  }
+  if (
+    /\b(10TH|TENTH)\b/.test(h) ||
+    /\bPLAYER\s*['’]?\s*10\b/.test(h)
+  ) {
+    return 10;
+  }
+
+  const matchNum = h.match(/\b(?:PLAYER|MEMBER|P|AGE|IGN|UID|SERVER)\s*#?\s*(\d{1,2})\b/);
+  if (matchNum) {
+    const n = parseInt(matchNum[1]);
+    if (n >= 1 && n <= 10) return n;
+  }
+  return null;
 }
 
 /**
@@ -116,7 +218,7 @@ async function getTeamMapFromResponseSheet(
     const resSheet = await withRetry(
       () => sheets.spreadsheets.values.get({
         spreadsheetId: resSpreadsheetId,
-        range: "A1:Z200",
+        range: "A1:AZ200",
       }),
       2,
       1000,
@@ -128,12 +230,24 @@ async function getTeamMapFromResponseSheet(
 
     let headerRowIdx = -1;
     let teamNameCol = -1;
-    const nameCols: number[] = [];
-    const uidCols: number[] = [];
-    const ignCols: number[] = [];
+
+    interface SlotCols {
+      nameCol?: number;
+      ignCol?: number;
+      uidCol?: number;
+      serverCol?: number;
+    }
+
+    const explicitSlots = new Map<number, SlotCols>();
+    const sequentialNameCols: number[] = [];
+    const sequentialIgnCols: number[] = [];
+    const sequentialUidCols: number[] = [];
+    const sequentialServerCols: number[] = [];
 
     for (let r = 0; r < Math.min(rows.length, 5); r++) {
       const row = rows[r];
+      let foundHeadersInRow = false;
+
       for (let c = 0; c < row.length; c++) {
         const val = String(row[c] ?? "").trim().toUpperCase();
         if (!val) continue;
@@ -143,41 +257,107 @@ async function getTeamMapFromResponseSheet(
           val === "TEAM NAME" ||
           val === "YOUR SQUAD NAME" ||
           val === "SQUAD NAME" ||
+          val === "TEAM" ||
           val.includes("TEAM NAME") ||
           val.includes("YOUR TEAM") ||
           val.includes("SQUAD NAME")
         ) {
           teamNameCol = c;
-        } else if (val.includes("UID") || val.includes("USER ID") || val.includes("GAME ID")) {
-          uidCols.push(c);
-        } else if (val.includes("IGN") || val.includes("GAME NAME") || val.includes("NICKNAME")) {
-          ignCols.push(c);
-        } else if (val.includes("NAME") || val.includes("PLAYER") || val.includes("CAPTAIN")) {
-          nameCols.push(c);
+          foundHeadersInRow = true;
+          continue;
         }
+
+        const slotNum = extractPlayerSlotNumber(val);
+        const isUid = val.includes("UID") || val.includes("USER ID") || val.includes("GAME ID") || val.includes("ACCOUNT ID") || val === "ID";
+        const isIgn = val.includes("IGN") || val.includes("GAME NAME") || val.includes("IN GAME NAME") || val.includes("IN-GAME NAME") || val.includes("NICKNAME");
+        const isServer = val.includes("SERVER") || val.includes("ZONE") || val === "ZONE ID" || val === "SERVER ID";
+        const isName = (val.includes("NAME") || val.includes("PLAYER") || val.includes("CAPTAIN") || val.includes("FULLNAME") || val.includes("FULL NAME")) && !isUid && !isIgn && !isServer && !val.includes("TEAM") && !val.includes("SQUAD");
+
+        if (isUid || isIgn || isServer || isName) {
+          foundHeadersInRow = true;
+        }
+
+        if (slotNum !== null) {
+          if (!explicitSlots.has(slotNum)) {
+            explicitSlots.set(slotNum, {});
+          }
+          const slot = explicitSlots.get(slotNum)!;
+          if (isUid && slot.uidCol === undefined) slot.uidCol = c;
+          else if (isIgn && slot.ignCol === undefined) slot.ignCol = c;
+          else if (isServer && slot.serverCol === undefined) slot.serverCol = c;
+          else if (isName && slot.nameCol === undefined) slot.nameCol = c;
+        }
+
+        if (isUid) sequentialUidCols.push(c);
+        else if (isIgn) sequentialIgnCols.push(c);
+        else if (isServer) sequentialServerCols.push(c);
+        else if (isName) sequentialNameCols.push(c);
       }
-      if (teamNameCol !== -1) {
+
+      if (foundHeadersInRow && (teamNameCol !== -1 || sequentialUidCols.length > 0)) {
         headerRowIdx = r;
         break;
       }
     }
 
-    if (headerRowIdx === -1 || teamNameCol === -1) {
-      teamNameCol = 1;
+    if (headerRowIdx === -1) {
+      if (teamNameCol === -1) teamNameCol = 1;
       headerRowIdx = 0;
     }
 
+    const hasExplicitSlots = explicitSlots.size > 0;
+    const sortedSlotNumbers = Array.from(explicitSlots.keys()).sort((a, b) => a - b);
+
     for (let r = headerRowIdx + 1; r < rows.length; r++) {
       const row = rows[r];
-      const teamName = String(row[teamNameCol] ?? "").trim();
-      if (!teamName) continue;
+      const teamName = teamNameCol !== -1 ? String(row[teamNameCol] ?? "").trim() : "";
+      if (teamName) {
+        teamNames.push(teamName);
+      }
 
-      teamNames.push(teamName);
+      const registerPlayerMapping = (nameVal: string, ignVal: string, uidVal: string) => {
+        const cleanUid = uidVal.replace(/\D/g, "").trim();
+        const rawUid = uidVal.trim();
+        const rawIgn = ignVal.trim();
+        const rawName = nameVal.trim();
 
-      for (const colIdx of [...uidCols, ...ignCols, ...nameCols]) {
-        const pVal = String(row[colIdx] ?? "").trim().toLowerCase();
-        if (pVal && pVal.length >= 2) {
-          playerTeamMap.set(pVal, teamName);
+        const uidsToMap = [cleanUid, rawUid].filter((u) => u && u.length >= 2);
+        for (const u of uidsToMap) {
+          if (teamName) playerTeamMap.set(u.toLowerCase(), teamName);
+        }
+
+        if (rawIgn && rawIgn.length >= 2) {
+          if (teamName) playerTeamMap.set(rawIgn.toLowerCase(), teamName);
+        }
+
+        if (rawName && rawName.length >= 2) {
+          if (teamName) playerTeamMap.set(rawName.toLowerCase(), teamName);
+        }
+      };
+
+      if (hasExplicitSlots) {
+        sortedSlotNumbers.forEach((slotNum) => {
+          const cols = explicitSlots.get(slotNum)!;
+          const nameVal = cols.nameCol !== undefined ? String(row[cols.nameCol] ?? "") : "";
+          const ignVal = cols.ignCol !== undefined ? String(row[cols.ignCol] ?? "") : "";
+          const uidVal = cols.uidCol !== undefined ? String(row[cols.uidCol] ?? "") : "";
+
+          registerPlayerMapping(nameVal, ignVal, uidVal);
+        });
+      } else {
+        const maxPlayersInRow = Math.max(
+          sequentialNameCols.length,
+          sequentialIgnCols.length,
+          sequentialUidCols.length,
+          1
+        );
+
+        for (let k = 0; k < maxPlayersInRow; k++) {
+          const nameVal = sequentialNameCols[k] !== undefined ? String(row[sequentialNameCols[k]] ?? "") : "";
+          const ignVal = sequentialIgnCols[k] !== undefined ? String(row[sequentialIgnCols[k]] ?? "") : "";
+          const uidVal = sequentialUidCols[k] !== undefined ? String(row[sequentialUidCols[k]] ?? "") : "";
+
+          registerPlayerMapping(nameVal, ignVal, uidVal);
         }
       }
     }
@@ -722,8 +902,23 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
       } else {
         errors.push({ chName, error: `Error reading sheet: ${msg}${teamsMessage}` });
       }
+      if (!chStats.some((s) => s.chName === chName)) {
+        chStats.push({ chName, count: 0 });
+      }
     }
   }
+
+  // Record CHs that had rule violations or reporting sheet errors in chStats with 0 count
+  errors.forEach((err) => {
+    if (
+      err.chName &&
+      err.chName !== "Reporting Sheet" &&
+      err.chName !== "Secondary Reporting Sheet" &&
+      !chStats.some((s) => s.chName === err.chName)
+    ) {
+      chStats.push({ chName: err.chName, count: 0 });
+    }
+  });
 
   // Step 4: Optional MooGold verification
   if (job.validationEnabled && allRows.length > 0) {

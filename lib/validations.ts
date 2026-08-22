@@ -59,9 +59,36 @@ export function isFormulaOrError(str: string): boolean {
  */
 export function isAgeHeader(val: string): boolean {
   const v = val.toUpperCase().trim();
-  if (v === "AGE" || v === "EDAD" || v === "YRS OLD" || v === "YEARS OLD" || v === "Y/O" || v === "AGE / EDAD" || v === "EDAD / AGE") return true;
+  if (!v) return false;
+  if (
+    v === "AGE" ||
+    v === "EDAD" ||
+    v === "YRS OLD" ||
+    v === "YEARS OLD" ||
+    v === "Y/O" ||
+    v === "AGE / EDAD" ||
+    v === "EDAD / AGE" ||
+    v === "KASARIAN / EDAD"
+  ) {
+    return true;
+  }
   if (/\b(AGE|EDAD|YEARS OLD|YRS OLD)\b/.test(v)) return true;
-  if (v.includes("PLAYER AGE") || v.includes("PLAYERS AGE") || v.includes("PLAYER'S AGE") || v.includes("YOUR AGE") || v.includes("CAPTAIN AGE") || v.includes("MEMBER AGE")) return true;
+  if (
+    v.includes("PLAYER AGE") ||
+    v.includes("PLAYERS AGE") ||
+    v.includes("PLAYER'S AGE") ||
+    v.includes("YOUR AGE") ||
+    v.includes("CAPTAIN AGE") ||
+    v.includes("CAPTAIN'S AGE") ||
+    v.includes("MEMBER AGE") ||
+    v.includes("MEMBER'S AGE") ||
+    v.includes("RESERVE AGE") ||
+    v.includes("RESERVE'S AGE") ||
+    v.includes("SUB AGE") ||
+    v.includes("SUB'S AGE")
+  ) {
+    return true;
+  }
   if (v.includes("HOW OLD") || v.includes("BIRTH") || v.includes("DOB")) return true;
   return false;
 }
@@ -223,11 +250,26 @@ export function detectReportingSheetColumns(
 
       // Detect "CH Nickname" column by header name
       if (
-        val === "CH NICKNAME" ||
-        val === "NICKNAME" ||
-        (val.includes("NICKNAME") && val.includes("CH")) ||
-        val.includes("CH NAME") ||
-        val.includes("CH FULL NAME")
+        !val.includes("TEAM") &&
+        !val.includes("GAME") &&
+        !val.includes("RESPONSE") &&
+        !val.includes("SHEET") &&
+        !val.includes("LIST") &&
+        (
+          val === "CH NICKNAME" ||
+          val === "NICKNAME" ||
+          val === "CH" ||
+          val === "HOST" ||
+          val === "HOST NICKNAME" ||
+          val === "HOST NAME" ||
+          val === "CH NAME" ||
+          val === "CH FULL NAME" ||
+          val === "COMMUNITY HOST" ||
+          val === "COMMUNITY HOST NICKNAME" ||
+          (val.includes("NICKNAME") && (val.includes("CH") || val.includes("HOST"))) ||
+          (val.includes("NAME") && (val.includes("CH") || val.includes("HOST"))) ||
+          val.includes("COMMUNITY HOST")
+        )
       ) {
         nicknameCol = c;
       }
@@ -286,6 +328,17 @@ export function detectReportingSheetColumns(
       headerRowIdx = r;
       break;
     }
+  }
+
+  // Fallback defaults if not found in header row scan
+  if (nicknameCol === -1 && rows.length > 0) {
+    nicknameCol = 3; // Column D default
+  }
+  if (linkCol === -1 && rows.length > 0) {
+    linkCol = type === "prl" ? 23 : 12; // Column X (PRL) or Column M (Diamonds) default
+  }
+  if (headerRowIdx === -1 && rows.length > 0) {
+    headerRowIdx = 0;
   }
 
   return { nicknameCol, linkCol, responseSheetCol, registeredTeamsCol, headerRowIdx };

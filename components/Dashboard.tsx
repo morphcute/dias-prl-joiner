@@ -282,9 +282,11 @@ export default function Dashboard() {
   // Categorize errors
   const getErrorType = (err: ChError) => {
     const msg = (err.error || "").toLowerCase();
-    if (msg.includes("cannot access") || msg.includes("permission") || msg.includes("dissolved")) return "accessibility";
-    if (msg.includes("duplicate")) return "duplicate";
-    if (msg.includes("fixed") || msg.includes("validation")) return "validation_fixed";
+    const type = (err.type || "").toLowerCase();
+    if (type === "rule_violation" || msg.includes("rules") || msg.includes("no link")) return "rule_violation";
+    if (type === "accessibility" || msg.includes("cannot access") || msg.includes("permission") || msg.includes("dissolved")) return "accessibility";
+    if (type === "duplicate" || msg.includes("duplicate")) return "duplicate";
+    if (type === "validation_fixed" || msg.includes("fixed") || msg.includes("validation")) return "validation_fixed";
     return "general";
   };
 
@@ -318,14 +320,14 @@ export default function Dashboard() {
     if (!selectedJob) return;
     const latestRun = selectedJob.runs?.[0];
     const totalRows = latestRun?.rowsWritten || 0;
-    const criticals = viewErrors.filter((e) => ["accessibility", "dissolved"].includes(getErrorType(e)));
+    const criticals = viewErrors.filter((e) => ["accessibility", "dissolved", "rule_violation"].includes(getErrorType(e)));
     const duplicates = viewErrors.filter((e) => getErrorType(e) === "duplicate");
 
     let text = `📊 SYNC REPORT SUMMARY: ${selectedJob.name}\n`;
     text += `====================================\n`;
     text += `Status: ${latestRun?.status || "N/A"}\n`;
     text += `Total Extracted Rows: ${totalRows}\n`;
-    text += `Critical Issues: ${criticals.length}\n`;
+    text += `Critical Issues & Rule Faults: ${criticals.length}\n`;
     text += `Duplicate Entries: ${duplicates.length}\n\n`;
 
     if (viewStats.length > 0) {
@@ -860,15 +862,15 @@ export default function Dashboard() {
           {activeLogTab === "overview" && (
             <div className="space-y-6">
               {/* Health Banner */}
-              {viewErrors.filter((e) => ["accessibility", "dissolved"].includes(getErrorType(e))).length > 0 ? (
+              {viewErrors.filter((e) => ["accessibility", "dissolved", "rule_violation"].includes(getErrorType(e))).length > 0 ? (
                 <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-start gap-3 text-rose-300 text-xs leading-relaxed">
                   <AlertCircle className="w-5 h-5 text-rose-400 mt-0.5 shrink-0" />
                   <div>
                     <h4 className="font-extrabold text-rose-400 text-sm uppercase tracking-wider">
-                      Critical Sheet Access Faults Detected
+                      Critical Sheet Access Faults or Rule Violations Detected
                     </h4>
                     <p className="mt-1">
-                      Some Community Host response sheets cannot be accessed. Ensure all CH Google Sheets are shared as "Anyone with the link can view". Check the CH Host Health tab to locate affected sheets.
+                      Some Community Host sheets had missing links (rule violations) or cannot be accessed. Check the CH Host Health tab to locate affected hosts.
                     </p>
                   </div>
                 </div>
@@ -879,7 +881,7 @@ export default function Dashboard() {
                     <h4 className="font-extrabold text-emerald-400 text-sm uppercase tracking-wider">
                       All CH Nodes Operating Nominally
                     </h4>
-                    <p className="mt-1">No critical sheet access permissions or dissolved link errors encountered.</p>
+                    <p className="mt-1">No critical sheet access permissions, dissolved links, or rule violation errors encountered.</p>
                   </div>
                 </div>
               )}
@@ -919,9 +921,9 @@ export default function Dashboard() {
                 </div>
 
                 <div className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 text-center">
-                  <span className="text-xs text-slate-400 font-bold uppercase">Critical Issues</span>
+                  <span className="text-xs text-slate-400 font-bold uppercase">Critical & Rule Issues</span>
                   <div className="text-2xl font-black text-rose-400 mt-1">
-                    {viewErrors.filter((e) => ["accessibility", "dissolved"].includes(getErrorType(e))).length}
+                    {viewErrors.filter((e) => ["accessibility", "dissolved", "rule_violation"].includes(getErrorType(e))).length}
                   </div>
                 </div>
 
@@ -950,6 +952,7 @@ export default function Dashboard() {
                 <tbody className="divide-y divide-slate-800/60">
                   {viewStats.map((stat, i) => {
                     const chErrs = viewErrors.filter((e) => e.chName === stat.chName);
+                    const hasRuleViolation = chErrs.some((e) => getErrorType(e) === "rule_violation");
                     const hasCritical = chErrs.some((e) => ["accessibility", "dissolved"].includes(getErrorType(e)));
                     const hasDup = chErrs.some((e) => getErrorType(e) === "duplicate");
 
@@ -957,7 +960,11 @@ export default function Dashboard() {
                       <tr key={i} className="hover:bg-slate-900/50">
                         <td className="p-3 font-bold text-white">{stat.chName}</td>
                         <td className="p-3 text-center">
-                          {hasCritical ? (
+                          {hasRuleViolation ? (
+                            <span className="px-2.5 py-1 rounded-lg bg-rose-500/20 text-rose-300 font-bold border border-rose-500/30 text-[10px] uppercase">
+                              Rule Fault
+                            </span>
+                          ) : hasCritical ? (
                             <span className="badge-failed">Critical</span>
                           ) : hasDup ? (
                             <span className="badge-diamonds">Duplicate</span>
