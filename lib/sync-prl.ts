@@ -4,7 +4,7 @@ import { google } from "googleapis";
 import { getUserAuth } from "./google";
 import { resolveUrl, ResolveResult } from "./url-resolver";
 import { verifyMlbbId } from "./mlbb";
-import { isFormulaOrError, adjustColumnsBasedOnData, detectReportingSheetColumns, isAgeHeader } from "./validations";
+import { isFormulaOrError, adjustColumnsBasedOnData, detectReportingSheetColumns, isAgeHeader, isTeamNameHeader } from "./validations";
 import { withRetry } from "./google-retry";
 
 interface ChError {
@@ -43,16 +43,16 @@ async function readChEntriesFromReportingSheet(
   const result = await withRetry(
     () => sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `'${sheetName}'!A1:AZ`,
+      range: `'${sheetName}'!A1:AZ300`,
     }),
-    4,
+    3,
     1500,
     `Read Reporting Sheet (${sheetName})`
   );
 
   const rows = (result as any)?.data?.values || [];
   if (rows.length === 0) {
-    errors.push({ chName: "Reporting Sheet", error: "Reporting sheet is blank", type: "accessibility" });
+    errors.push({ chName: "Reporting Sheet", error: "Reporting sheet is blank or missing.", type: "accessibility" });
     return { entries, errors };
   }
 
@@ -60,16 +60,15 @@ async function readChEntriesFromReportingSheet(
   const { nicknameCol, linkCol, responseSheetCol, registeredTeamsCol, headerRowIdx } = detectReportingSheetColumns(rows, type);
 
   if (nicknameCol === -1 || linkCol === -1) {
-    const missing = nicknameCol === -1 ? (linkCol === -1 ? "CH Nickname and Link" : "CH Nickname") : "Link";
     errors.push({
       chName: "Reporting Sheet",
-      error: `Could not find column for ${missing} in headers. Checked first 10 rows.`,
+      error: "Could not find CH Nickname or Link columns in the reporting sheet.",
       type: "accessibility"
     });
     return { entries, errors };
   }
 
-  console.log(`[ReportingSheet] Tab: "${sheetName}", Nickname Col Index: ${nicknameCol}, Link Col Index: ${linkCol}, Response Sheet Col Index: ${responseSheetCol}, Registered Teams Col Index: ${registeredTeamsCol}, Header Row Index: ${headerRowIdx}`);
+  console.log(`[ReportingSheet] Scanning CHs starting from header row ${headerRowIdx} (CH Col: ${nicknameCol}, Link Col: ${linkCol}, ResponseSheet Col: ${responseSheetCol}, RegTeams Col: ${registeredTeamsCol})`);
 
     // Extract entries starting from the row after headers
   for (let i = headerRowIdx + 1; i < rows.length; i++) {
@@ -100,7 +99,19 @@ async function readChEntriesFromReportingSheet(
       continue;
     }
 
-    const responseSheetUrl = responseSheetCol !== -1 ? String(row[responseSheetCol] ?? "").trim() : "";
+    let responseSheetUrl = responseSheetCol !== -1 ? String(row[responseSheetCol] ?? "").trim() : "";
+    // If responseSheetUrl is empty or not a link, scan row for any other Google Sheets / URL cell
+    if (!responseSheetUrl || (!responseSheetUrl.startsWith("http") && !responseSheetUrl.startsWith("www"))) {
+      for (let c = 0; c < row.length; c++) {
+        if (c === linkCol || c === nicknameCol) continue;
+        const cellVal = String(row[c] ?? "").trim();
+        if ((cellVal.startsWith("http") || cellVal.startsWith("www") || cellVal.includes("docs.google.com")) && cellVal !== link) {
+          responseSheetUrl = cellVal;
+          break;
+        }
+      }
+    }
+
     const registeredTeams = registeredTeamsCol !== -1 ? String(row[registeredTeamsCol] ?? "").trim() : "";
 
     entries.push({ 
@@ -209,7 +220,7 @@ function extractPlayerSlotNumber(header: string): number | null {
 
 /**
  * Extracts team names, player-to-team mapping, and multi-player age mapping from the CH's Tournament Response Sheet (Google Form Responses).
- * Detects player slots (1st Player's Age, 2nd Player's Age, etc.) and accurately links each player to their respective age.
+ * Detects player slots (1st Player's Age, 2nd Player's Age, etc.) and accurately links each player to their respective age and team name.
  */
 async function getTeamMapFromResponseSheet(
   sheets: any,
@@ -235,7 +246,7 @@ async function getTeamMapFromResponseSheet(
     const resSheet = await withRetry(
       () => sheets.spreadsheets.values.get({
         spreadsheetId: resSpreadsheetId,
-        range: "A1:AZ200",
+        range: "A1:AZ300",
       }),
       2,
       1000,
@@ -272,16 +283,7 @@ async function getTeamMapFromResponseSheet(
         const val = String(row[c] ?? "").trim().toUpperCase();
         if (!val) continue;
 
-        if (
-          val === "YOUR TEAM NAME" ||
-          val === "TEAM NAME" ||
-          val === "YOUR SQUAD NAME" ||
-          val === "SQUAD NAME" ||
-          val === "TEAM" ||
-          val.includes("TEAM NAME") ||
-          val.includes("YOUR TEAM") ||
-          val.includes("SQUAD NAME")
-        ) {
+        if (isTeamNameHeader(val)) {
           teamNameCol = c;
           foundHeadersInRow = true;
           continue;
@@ -324,8 +326,30 @@ async function getTeamMapFromResponseSheet(
     }
 
     if (headerRowIdx === -1) {
-      if (teamNameCol === -1) teamNameCol = 1;
       headerRowIdx = 0;
+    }
+
+    // Fallback if teamNameCol not explicitly named
+    if (teamNameCol === -1 && rows.length > 0) {
+      for (let c = 0; c < (rows[0]?.length || 0); c++) {
+        const headerVal = String(rows[0][c] ?? "").toUpperCase().trim();
+        if (
+          !headerVal.includes("TIMESTAMP") &&
+          !headerVal.includes("EMAIL") &&
+          !headerVal.includes("SCORE") &&
+          (!explicitSlots.has(1) || (
+            explicitSlots.get(1)?.nameCol !== c &&
+            explicitSlots.get(1)?.ignCol !== c &&
+            explicitSlots.get(1)?.uidCol !== c &&
+            explicitSlots.get(1)?.serverCol !== c &&
+            explicitSlots.get(1)?.ageCol !== c
+          ))
+        ) {
+          teamNameCol = c;
+          break;
+        }
+      }
+      if (teamNameCol === -1) teamNameCol = 2;
     }
 
     const hasExplicitSlots = explicitSlots.size > 0;
@@ -343,34 +367,70 @@ async function getTeamMapFromResponseSheet(
         nameVal: string,
         ignVal: string,
         uidVal: string,
+        serverVal: string,
         ageVal: string,
         slotIdx: number
       ) => {
         const cleanAge = ageVal.trim();
-        const cleanUid = uidVal.replace(/\D/g, "").trim();
         const rawUid = uidVal.trim();
+        const rawServer = serverVal.trim();
         const rawIgn = ignVal.trim();
         const rawName = nameVal.trim();
 
-        const uidsToMap = [cleanUid, rawUid].filter((u) => u && u.length >= 2);
-        for (const u of uidsToMap) {
-          const key = u.toLowerCase();
-          if (teamName) playerTeamMap.set(key, teamName);
-          if (cleanAge) playerAgeMap.set(key, cleanAge);
+        // 1. Extract pure digit sequences from UID and Server strings
+        const allNumsInUid = rawUid.match(/\d+/g) || [];
+        const allNumsInServer = rawServer.match(/\d+/g) || [];
+        const allNumsInIgn = rawIgn.match(/\d+/g) || [];
+        const allNums = [...allNumsInUid, ...allNumsInServer, ...allNumsInIgn];
+
+        const uidCandidates = new Set<string>();
+        if (rawUid) uidCandidates.add(rawUid.toLowerCase());
+        const pureDigitsUid = rawUid.replace(/\D/g, "");
+        if (pureDigitsUid && pureDigitsUid.length >= 5) uidCandidates.add(pureDigitsUid.toLowerCase());
+
+        for (const num of allNums) {
+          if (num.length >= 6 && num.length <= 12) {
+            uidCandidates.add(num.toLowerCase());
+          }
         }
 
+        for (const u of uidCandidates) {
+          if (teamName) playerTeamMap.set(u, teamName);
+          if (cleanAge) playerAgeMap.set(u, cleanAge);
+        }
+
+        // 2. Map IGNs (exact and normalized without spaces/special characters)
         if (rawIgn && rawIgn.length >= 2) {
-          const key = rawIgn.toLowerCase();
-          if (teamName) playerTeamMap.set(key, teamName);
-          if (cleanAge) playerAgeMap.set(key, cleanAge);
+          const ignLower = rawIgn.toLowerCase();
+          const ignClean = ignLower.replace(/[^a-z0-9]/g, "");
+          if (teamName) {
+            playerTeamMap.set(ignLower, teamName);
+            if (ignClean) playerTeamMap.set(ignClean, teamName);
+          }
+          if (cleanAge) {
+            playerAgeMap.set(ignLower, cleanAge);
+            if (ignClean) playerAgeMap.set(ignClean, cleanAge);
+          }
         }
 
+        // 3. Map Names (exact, normalized without middle initial/special characters)
         if (rawName && rawName.length >= 2) {
-          const key = rawName.toLowerCase();
-          if (teamName) playerTeamMap.set(key, teamName);
-          if (cleanAge) playerAgeMap.set(key, cleanAge);
+          const nameLower = rawName.toLowerCase();
+          const nameClean = nameLower.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
+          const nameNoSpace = nameLower.replace(/[^a-z0-9]/g, "");
+          if (teamName) {
+            playerTeamMap.set(nameLower, teamName);
+            if (nameClean) playerTeamMap.set(nameClean, teamName);
+            if (nameNoSpace) playerTeamMap.set(nameNoSpace, teamName);
+          }
+          if (cleanAge) {
+            playerAgeMap.set(nameLower, cleanAge);
+            if (nameClean) playerAgeMap.set(nameClean, cleanAge);
+            if (nameNoSpace) playerAgeMap.set(nameNoSpace, cleanAge);
+          }
         }
 
+        // 4. Map positional slot within team
         if (teamName && cleanAge) {
           teamSlotAgeMap.set(`${teamName.toLowerCase()}#${slotIdx}`, cleanAge);
         }
@@ -382,9 +442,10 @@ async function getTeamMapFromResponseSheet(
           const nameVal = cols.nameCol !== undefined ? String(row[cols.nameCol] ?? "") : "";
           const ignVal = cols.ignCol !== undefined ? String(row[cols.ignCol] ?? "") : "";
           const uidVal = cols.uidCol !== undefined ? String(row[cols.uidCol] ?? "") : "";
+          const serverVal = cols.serverCol !== undefined ? String(row[cols.serverCol] ?? "") : "";
           const ageVal = cols.ageCol !== undefined ? String(row[cols.ageCol] ?? "") : "";
 
-          registerPlayerMapping(nameVal, ignVal, uidVal, ageVal, idx);
+          registerPlayerMapping(nameVal, ignVal, uidVal, serverVal, ageVal, idx);
         });
       } else {
         const maxPlayersInRow = Math.max(
@@ -399,14 +460,15 @@ async function getTeamMapFromResponseSheet(
           const nameVal = sequentialNameCols[k] !== undefined ? String(row[sequentialNameCols[k]] ?? "") : "";
           const ignVal = sequentialIgnCols[k] !== undefined ? String(row[sequentialIgnCols[k]] ?? "") : "";
           const uidVal = sequentialUidCols[k] !== undefined ? String(row[sequentialUidCols[k]] ?? "") : "";
+          const serverVal = sequentialServerCols[k] !== undefined ? String(row[sequentialServerCols[k]] ?? "") : "";
           const ageVal = sequentialAgeCols[k] !== undefined ? String(row[sequentialAgeCols[k]] ?? "") : "";
 
-          registerPlayerMapping(nameVal, ignVal, uidVal, ageVal, k);
+          registerPlayerMapping(nameVal, ignVal, uidVal, serverVal, ageVal, k);
         }
       }
     }
   } catch (e) {
-    console.log("[ResponseSheet] Team/Age extraction notice:", e);
+    console.log("[ResponseSheet] Team extraction notice:", e);
   }
 
   return { teamNames, playerTeamMap, playerAgeMap, teamSlotAgeMap };
@@ -934,13 +996,27 @@ export async function syncPrl(job: JoinerJob, runId: string) {
         // If teamName or age is empty and a response sheet URL exists, fetch team/age map on-demand with caching
         if ((!teamName || !age) && responseSheetUrl) {
           const { teamNames: respTeamNames, playerTeamMap, playerAgeMap, teamSlotAgeMap } = await fetchChTeamMap(responseSheetUrl);
+          
+          const uidKey = uid ? uid.toLowerCase() : "";
+          const ignKey = ign ? ign.toLowerCase() : "";
+          const nameKey = name ? name.toLowerCase() : "";
+          const ignClean = ignKey.replace(/[^a-z0-9]/g, "");
+          const nameClean = nameKey.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
+          const nameNoSpace = nameKey.replace(/[^a-z0-9]/g, "");
+
           if (!teamName) {
-            if (uid && playerTeamMap.has(uid.toLowerCase())) {
-              teamName = playerTeamMap.get(uid.toLowerCase())!;
-            } else if (ign && playerTeamMap.has(ign.toLowerCase())) {
-              teamName = playerTeamMap.get(ign.toLowerCase())!;
-            } else if (name && playerTeamMap.has(name.toLowerCase())) {
-              teamName = playerTeamMap.get(name.toLowerCase())!;
+            if (uidKey && playerTeamMap.has(uidKey)) {
+              teamName = playerTeamMap.get(uidKey)!;
+            } else if (ignKey && playerTeamMap.has(ignKey)) {
+              teamName = playerTeamMap.get(ignKey)!;
+            } else if (ignClean && playerTeamMap.has(ignClean)) {
+              teamName = playerTeamMap.get(ignClean)!;
+            } else if (nameKey && playerTeamMap.has(nameKey)) {
+              teamName = playerTeamMap.get(nameKey)!;
+            } else if (nameClean && playerTeamMap.has(nameClean)) {
+              teamName = playerTeamMap.get(nameClean)!;
+            } else if (nameNoSpace && playerTeamMap.has(nameNoSpace)) {
+              teamName = playerTeamMap.get(nameNoSpace)!;
             } else if (respTeamNames.length > 0) {
               const teamIdx = Math.floor(validRowCount / gameModeMult);
               if (teamIdx < respTeamNames.length) {
@@ -948,13 +1024,20 @@ export async function syncPrl(job: JoinerJob, runId: string) {
               }
             }
           }
+
           if (!age) {
-            if (uid && playerAgeMap.has(uid.toLowerCase())) {
-              age = playerAgeMap.get(uid.toLowerCase())!;
-            } else if (ign && playerAgeMap.has(ign.toLowerCase())) {
-              age = playerAgeMap.get(ign.toLowerCase())!;
-            } else if (name && playerAgeMap.has(name.toLowerCase())) {
-              age = playerAgeMap.get(name.toLowerCase())!;
+            if (uidKey && playerAgeMap.has(uidKey)) {
+              age = playerAgeMap.get(uidKey)!;
+            } else if (ignKey && playerAgeMap.has(ignKey)) {
+              age = playerAgeMap.get(ignKey)!;
+            } else if (ignClean && playerAgeMap.has(ignClean)) {
+              age = playerAgeMap.get(ignClean)!;
+            } else if (nameKey && playerAgeMap.has(nameKey)) {
+              age = playerAgeMap.get(nameKey)!;
+            } else if (nameClean && playerAgeMap.has(nameClean)) {
+              age = playerAgeMap.get(nameClean)!;
+            } else if (nameNoSpace && playerAgeMap.has(nameNoSpace)) {
+              age = playerAgeMap.get(nameNoSpace)!;
             } else if (teamName && teamSlotAgeMap) {
               const slotInTeam = validRowCount % gameModeMult;
               const slotAge = teamSlotAgeMap.get(`${teamName.toLowerCase()}#${slotInTeam}`);
@@ -993,8 +1076,8 @@ export async function syncPrl(job: JoinerJob, runId: string) {
                 dupWith = `Same CH (${chName}, Real Server: ${prevCh.server})`;
                 dupType = "Fake Duplicate (Altered Server)";
               } else {
-                errorMsg = `Fake duplicate MLBB ID found (copied ID across CHs): ${name || "Unknown"} (UID: ${uid}, Server: ${server}) was already registered in CH ${prevCh.chName} (with Server: ${prevCh.server})`;
-                dupWith = `Copied from ${prevCh.chName} (Real Server: ${prevCh.server})`;
+                errorMsg = `Fake duplicate MLBB ID found (different server entered): ${name || "Unknown"} (UID: ${uid}, Server: ${server}) was registered in CH ${chName}, but originally registered with Server ${prevCh.server} in CH ${prevCh.chName}`;
+                dupWith = `Duplicated with ${prevCh.chName} (Real Server: ${prevCh.server})`;
                 dupType = "Fake Duplicate (Altered Server)";
               }
             }
@@ -1233,9 +1316,11 @@ export async function syncPrl(job: JoinerJob, runId: string) {
   const colCount = HEADER.length;
   const requests: any[] = [];
 
-  // Duplicates tab formatting with alternating group colors
+  // Duplicates tab formatting with alternating group colors and explicit column widths
   if (dupSheetId !== undefined) {
     const dupColCount = DUP_HEADER.length;
+    
+    // Freeze header row
     requests.push({
       updateSheetProperties: {
         properties: { sheetId: dupSheetId, gridProperties: { frozenRowCount: 1 } },
@@ -1243,27 +1328,72 @@ export async function syncPrl(job: JoinerJob, runId: string) {
       },
     });
 
-    // Header formatting (Dark Navy)
+    // Set Header row height to 36px
+    requests.push({
+      updateDimensionProperties: {
+        range: { sheetId: dupSheetId, dimension: "ROWS", startIndex: 0, endIndex: 1 },
+        properties: { pixelSize: 36 },
+        fields: "pixelSize",
+      },
+    });
+
+    // Set Data rows height to 28px
+    if (finalDupRows.length > 1) {
+      requests.push({
+        updateDimensionProperties: {
+          range: { sheetId: dupSheetId, dimension: "ROWS", startIndex: 1, endIndex: finalDupRows.length },
+          properties: { pixelSize: 28 },
+          fields: "pixelSize",
+        },
+      });
+    }
+
+    // Header cell formatting (Deep Cyber Navy with bold white text)
     requests.push({
       repeatCell: {
         range: { sheetId: dupSheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: dupColCount },
         cell: {
           userEnteredFormat: {
-            backgroundColor: { red: 0.11, green: 0.13, blue: 0.22 },
+            backgroundColor: { red: 0.09, green: 0.11, blue: 0.19 },
             textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true, fontSize: 10 },
             horizontalAlignment: "CENTER",
             verticalAlignment: "MIDDLE",
+            wrapStrategy: "WRAP",
           },
         },
-        fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)",
+        fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)",
       },
     });
 
+    // Base formatting for all data rows in Duplicates Tab
+    if (finalDupRows.length > 1) {
+      requests.push({
+        repeatCell: {
+          range: { sheetId: dupSheetId, startRowIndex: 1, endRowIndex: finalDupRows.length, startColumnIndex: 0, endColumnIndex: dupColCount },
+          cell: {
+            userEnteredFormat: {
+              borders: {
+                top: { style: "SOLID", color: { red: 0.82, green: 0.84, blue: 0.88 } },
+                bottom: { style: "SOLID", color: { red: 0.82, green: 0.84, blue: 0.88 } },
+                left: { style: "SOLID", color: { red: 0.82, green: 0.84, blue: 0.88 } },
+                right: { style: "SOLID", color: { red: 0.82, green: 0.84, blue: 0.88 } },
+              },
+              horizontalAlignment: "CENTER",
+              verticalAlignment: "MIDDLE",
+              wrapStrategy: "WRAP",
+              textFormat: { fontSize: 10, foregroundColor: { red: 0.1, green: 0.12, blue: 0.2 } },
+            },
+          },
+          fields: "userEnteredFormat(borders,horizontalAlignment,verticalAlignment,wrapStrategy,textFormat)",
+        },
+      });
+    }
+
     // Color palette for alternating duplicate groups:
-    // Group 0, 2, 4... -> Soft Light Peach/Warm Yellow
-    // Group 1, 3, 5... -> Soft Light Ice Blue
-    const COLOR_PEACH = { red: 1.0, green: 0.94, blue: 0.86 };     // #FFF0DC Soft Peach
-    const COLOR_ICE_BLUE = { red: 0.92, green: 0.96, blue: 1.0 }; // #EBF5FF Soft Blue
+    // Group 0, 2, 4... -> Warm Soft Peach/Cream #FFF3E0
+    // Group 1, 3, 5... -> Soft Ice Blue #EBF5FF
+    const COLOR_PEACH = { red: 1.0, green: 0.95, blue: 0.88 };
+    const COLOR_ICE_BLUE = { red: 0.92, green: 0.96, blue: 1.0 };
 
     duplicateRowsList.forEach((item, idx) => {
       const rowIndex = idx + 1; // 1-indexed row in sheet (Row 0 is header)
@@ -1281,30 +1411,28 @@ export async function syncPrl(job: JoinerJob, runId: string) {
           cell: {
             userEnteredFormat: {
               backgroundColor: bgColor,
-              borders: {
-                top: { style: "SOLID", color: { red: 0.82, green: 0.82, blue: 0.82 } },
-                bottom: { style: "SOLID", color: { red: 0.82, green: 0.82, blue: 0.82 } },
-                left: { style: "SOLID", color: { red: 0.82, green: 0.82, blue: 0.82 } },
-                right: { style: "SOLID", color: { red: 0.82, green: 0.82, blue: 0.82 } },
-              },
-              horizontalAlignment: "CENTER",
-              verticalAlignment: "MIDDLE",
-              wrapStrategy: "WRAP",
-              textFormat: { fontSize: 10 },
             },
           },
-          fields: "userEnteredFormat(backgroundColor,borders,horizontalAlignment,verticalAlignment,wrapStrategy,textFormat.fontSize)",
+          fields: "userEnteredFormat.backgroundColor",
         },
       });
     });
 
-    requests.push({
-      autoResizeDimensions: {
-        dimensions: { sheetId: dupSheetId, dimension: "COLUMNS", startIndex: 0, endIndex: dupColCount },
-      },
+    // Explicit Column Widths for Duplicates Tab:
+    // 0: CH (150px), 1: Players Name (200px), 2: Age (70px), 3: Players IGN (170px), 4: Server (90px), 5: UID (130px), 6: TEAM NAME (180px), 7: DUPLICATED WITH CH (220px), 8: DUPLICATE TYPE (220px)
+    const dupColWidths = [150, 200, 70, 170, 90, 130, 180, 220, 220];
+    dupColWidths.forEach((width, colIdx) => {
+      requests.push({
+        updateDimensionProperties: {
+          range: { sheetId: dupSheetId, dimension: "COLUMNS", startIndex: colIdx, endIndex: colIdx + 1 },
+          properties: { pixelSize: width },
+          fields: "pixelSize",
+        },
+      });
     });
   }
 
+  // Pre Registered List Tab Formatting
   requests.push({
     updateSheetProperties: {
       properties: { sheetId: targetSheetId, gridProperties: { frozenRowCount: 1 } },
@@ -1312,39 +1440,62 @@ export async function syncPrl(job: JoinerJob, runId: string) {
     },
   });
 
+  // Set Header row height to 36px
+  requests.push({
+    updateDimensionProperties: {
+      range: { sheetId: targetSheetId, dimension: "ROWS", startIndex: 0, endIndex: 1 },
+      properties: { pixelSize: 36 },
+      fields: "pixelSize",
+    },
+  });
+
+  // Set Data rows height to 26px
+  if (finalRows.length > 1) {
+    requests.push({
+      updateDimensionProperties: {
+        range: { sheetId: targetSheetId, dimension: "ROWS", startIndex: 1, endIndex: finalRows.length },
+        properties: { pixelSize: 26 },
+        fields: "pixelSize",
+      },
+    });
+  }
+
+  // Header row formatting (Deep Cyber Navy with bold white text)
   requests.push({
     repeatCell: {
       range: { sheetId: targetSheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: colCount },
       cell: {
         userEnteredFormat: {
-          backgroundColor: { red: 0.11, green: 0.13, blue: 0.22 },
+          backgroundColor: { red: 0.09, green: 0.11, blue: 0.19 },
           textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true, fontSize: 10 },
           horizontalAlignment: "CENTER",
           verticalAlignment: "MIDDLE",
+          wrapStrategy: "WRAP",
         },
       },
-      fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)",
+      fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)",
     },
   });
 
+  // Data rows base formatting (clean borders, centered text)
   requests.push({
     repeatCell: {
-      range: { sheetId: targetSheetId, startRowIndex: 0, endRowIndex: finalRows.length, startColumnIndex: 0, endColumnIndex: colCount },
+      range: { sheetId: targetSheetId, startRowIndex: 1, endRowIndex: finalRows.length, startColumnIndex: 0, endColumnIndex: colCount },
       cell: {
         userEnteredFormat: {
           borders: {
-            top: { style: "SOLID", color: { red: 0.85, green: 0.85, blue: 0.85 } },
-            bottom: { style: "SOLID", color: { red: 0.85, green: 0.85, blue: 0.85 } },
-            left: { style: "SOLID", color: { red: 0.85, green: 0.85, blue: 0.85 } },
-            right: { style: "SOLID", color: { red: 0.85, green: 0.85, blue: 0.85 } },
+            top: { style: "SOLID", color: { red: 0.85, green: 0.87, blue: 0.90 } },
+            bottom: { style: "SOLID", color: { red: 0.85, green: 0.87, blue: 0.90 } },
+            left: { style: "SOLID", color: { red: 0.85, green: 0.87, blue: 0.90 } },
+            right: { style: "SOLID", color: { red: 0.85, green: 0.87, blue: 0.90 } },
           },
           horizontalAlignment: "CENTER",
           verticalAlignment: "MIDDLE",
           wrapStrategy: "WRAP",
-          textFormat: { fontSize: 10 },
+          textFormat: { fontSize: 10, foregroundColor: { red: 0.1, green: 0.12, blue: 0.2 } },
         },
       },
-      fields: "userEnteredFormat(borders,horizontalAlignment,verticalAlignment,wrapStrategy,textFormat.fontSize)",
+      fields: "userEnteredFormat(borders,horizontalAlignment,verticalAlignment,wrapStrategy,textFormat)",
     },
   });
 
@@ -1357,8 +1508,8 @@ export async function syncPrl(job: JoinerJob, runId: string) {
           range: { sheetId: targetSheetId, startRowIndex: r - 1, endRowIndex: r, startColumnIndex: 0, endColumnIndex: 1 },
           cell: {
             userEnteredFormat: {
-              backgroundColor: { red: 0.9, green: 0.9, blue: 0.98 },
-              textFormat: { bold: true, foregroundColor: { red: 0.1, green: 0.1, blue: 0.4 } }
+              backgroundColor: { red: 0.92, green: 0.94, blue: 1.0 },
+              textFormat: { bold: true, foregroundColor: { red: 0.12, green: 0.15, blue: 0.45 } }
             }
           },
           fields: "userEnteredFormat(backgroundColor,textFormat(bold,foregroundColor))",
@@ -1374,8 +1525,8 @@ export async function syncPrl(job: JoinerJob, runId: string) {
         range: { sheetId: targetSheetId, startRowIndex: dupIdx, endRowIndex: dupIdx + 1, startColumnIndex: 0, endColumnIndex: colCount },
         cell: {
           userEnteredFormat: {
-            backgroundColor: { red: 1, green: 0.85, blue: 0.85 },
-            textFormat: { foregroundColor: { red: 0.6, green: 0.1, blue: 0.1 }, bold: true }
+            backgroundColor: { red: 1, green: 0.88, blue: 0.88 },
+            textFormat: { foregroundColor: { red: 0.65, green: 0.1, blue: 0.1 }, bold: true }
           }
         },
         fields: "userEnteredFormat(backgroundColor,textFormat(foregroundColor,bold))",
@@ -1423,45 +1574,25 @@ export async function syncPrl(job: JoinerJob, runId: string) {
     });
   }
 
-  requests.push({
-    autoResizeDimensions: {
-      dimensions: { sheetId: targetSheetId, dimension: "COLUMNS", startIndex: 0, endIndex: colCount },
-    },
-  });
+  // Explicit Column Widths for Pre Registered List Tab:
+  // 0: CH (150px), 1: Players Name (220px), 2: Age (70px), 3: Players IGN (180px), 4: Server (90px), 5: UID (140px), 6: Status (120px)
+  const prlColWidths = [150, 220, 70, 180, 90, 140];
+  if (job.validationEnabled) prlColWidths.push(120);
 
-  requests.push({
-    updateDimensionProperties: {
-      range: { sheetId: targetSheetId, dimension: "COLUMNS", startIndex: 0, endIndex: 1 },
-      properties: { pixelSize: 180 },
-      fields: "pixelSize",
-    },
-  });
-  requests.push({
-    updateDimensionProperties: {
-      range: { sheetId: targetSheetId, dimension: "COLUMNS", startIndex: 1, endIndex: 2 },
-      properties: { pixelSize: 200 },
-      fields: "pixelSize",
-    },
-  });
-  requests.push({
-    updateDimensionProperties: {
-      range: { sheetId: targetSheetId, dimension: "COLUMNS", startIndex: 2, endIndex: 3 },
-      properties: { pixelSize: 80 },
-      fields: "pixelSize",
-    },
-  });
-  requests.push({
-    updateDimensionProperties: {
-      range: { sheetId: targetSheetId, dimension: "COLUMNS", startIndex: 3, endIndex: 4 },
-      properties: { pixelSize: 200 },
-      fields: "pixelSize",
-    },
+  prlColWidths.forEach((width, colIdx) => {
+    requests.push({
+      updateDimensionProperties: {
+        range: { sheetId: targetSheetId, dimension: "COLUMNS", startIndex: colIdx, endIndex: colIdx + 1 },
+        properties: { pixelSize: width },
+        fields: "pixelSize",
+      },
+    });
   });
 
   requests.push({
     updateBorders: {
       range: { sheetId: targetSheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: colCount },
-      bottom: { style: "SOLID_MEDIUM", color: { red: 0.11, green: 0.13, blue: 0.22 } },
+      bottom: { style: "SOLID_MEDIUM", color: { red: 0.09, green: 0.11, blue: 0.19 } },
     },
   });
 

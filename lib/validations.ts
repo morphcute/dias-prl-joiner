@@ -94,6 +94,59 @@ export function isAgeHeader(val: string): boolean {
 }
 
 /**
+ * Checks if a header value corresponds to Team Name / Squad Name.
+ */
+export function isTeamNameHeader(val: string): boolean {
+  const v = val.toUpperCase().trim();
+  if (!v) return false;
+  // Exclude player / member / captain / ign / uid / server / age / email / timestamp
+  if (
+    v.includes("PLAYER") ||
+    v.includes("MEMBER") ||
+    v.includes("CAPTAIN") ||
+    v.includes("LEADER") ||
+    v.includes("IGN") ||
+    v.includes("UID") ||
+    v.includes("USER ID") ||
+    v.includes("GAME ID") ||
+    v.includes("SERVER") ||
+    v.includes("ZONE") ||
+    isAgeHeader(v) ||
+    v.includes("EMAIL") ||
+    v.includes("TIMESTAMP")
+  ) {
+    return false;
+  }
+  if (
+    v === "YOUR TEAM NAME" ||
+    v === "TEAM NAME" ||
+    v === "YOUR SQUAD NAME" ||
+    v === "SQUAD NAME" ||
+    v === "TEAM" ||
+    v === "SQUAD" ||
+    v === "TEAM / SQUAD" ||
+    v === "TEAM/SQUAD" ||
+    v === "CLAN" ||
+    v === "CLAN NAME" ||
+    v === "GROUP NAME" ||
+    v.includes("TEAM NAME") ||
+    v.includes("SQUAD NAME") ||
+    v.includes("YOUR TEAM") ||
+    v.includes("YOUR SQUAD") ||
+    v.includes("NAME OF TEAM") ||
+    v.includes("NAME OF SQUAD") ||
+    v.includes("PANGALAN NG TEAM") ||
+    v.includes("PANGALAN NG SQUAD") ||
+    v.includes("TEAM/SQUAD") ||
+    v.includes("TEAM / SQUAD") ||
+    /\b(TEAM|SQUAD|CLAN)\b/.test(v)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Samples data rows below the header row to verify and correct column indexes.
  * Resolves misaligned headers or swapped columns by analyzing the actual data types.
  */
@@ -276,13 +329,33 @@ export function detectReportingSheetColumns(
 
       // Detect "Tournament Response Sheet" column by header name
       if (
-        val === "TOURNAMENT RESPONSE SHEET" ||
-        val === "TOURNAMENT RESPONSES SHEET" ||
-        val === "RESPONSE SHEET" ||
-        val === "TOURNAMENT RESPONSE" ||
-        val.includes("RESPONSE SHEET") ||
-        val.includes("TOURNAMENT RESPONSE") ||
-        val.includes("FORM RESPONSE")
+        c !== nicknameCol &&
+        (
+          val === "TOURNAMENT RESPONSE SHEET" ||
+          val === "TOURNAMENT RESPONSES SHEET" ||
+          val === "RESPONSE SHEET" ||
+          val === "RESPONSES SHEET" ||
+          val === "TOURNAMENT RESPONSE" ||
+          val === "TOURNAMENT RESPONSES" ||
+          val === "RESPONSE" ||
+          val === "RESPONSES" ||
+          val === "FORM RESPONSES" ||
+          val === "FORM RESPONSE" ||
+          val === "GOOGLE FORM" ||
+          val === "RESPONSES LINK" ||
+          val === "RESPONSE LINK" ||
+          val === "REGISTRATION RESPONSES" ||
+          val === "REGISTRATION FORM" ||
+          val === "FORM LINK" ||
+          val.includes("RESPONSE SHEET") ||
+          val.includes("RESPONSES SHEET") ||
+          val.includes("TOURNAMENT RESPONSE") ||
+          val.includes("TOURNAMENT RESPONSES") ||
+          val.includes("FORM RESPONSE") ||
+          val.includes("FORM RESPONSES") ||
+          (val.includes("RESPONSE") && !val.includes("DIAMOND") && !val.includes("PRL") && !val.includes("PRE REGISTERED")) ||
+          (val.includes("FORM") && !val.includes("PLATFORM"))
+        )
       ) {
         responseSheetCol = c;
       }
@@ -336,6 +409,9 @@ export function detectReportingSheetColumns(
   }
   if (linkCol === -1 && rows.length > 0) {
     linkCol = type === "prl" ? 23 : 12; // Column X (PRL) or Column M (Diamonds) default
+  }
+  if (responseSheetCol === -1 && rows.length > 0) {
+    responseSheetCol = 4; // Column E default fallback
   }
   if (headerRowIdx === -1 && rows.length > 0) {
     headerRowIdx = 0;

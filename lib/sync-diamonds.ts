@@ -4,7 +4,7 @@ import { google } from "googleapis";
 import { getUserAuth } from "./google";
 import { resolveUrl, ResolveResult } from "./url-resolver";
 import { verifyMlbbId } from "./mlbb";
-import { isFormulaOrError, adjustColumnsBasedOnData, detectReportingSheetColumns } from "./validations";
+import { isFormulaOrError, adjustColumnsBasedOnData, detectReportingSheetColumns, isTeamNameHeader } from "./validations";
 import { withRetry } from "./google-retry";
 
 interface ChError {
@@ -32,32 +32,31 @@ async function readChEntriesFromReportingSheet(
   const result = await withRetry(
     () => sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `'${sheetName}'!A1:AZ`,
+      range: `'${sheetName}'!A1:AZ300`,
     }),
-    4,
+    3,
     1500,
     `Read Reporting Sheet (${sheetName})`
   );
 
   const rows = (result as any)?.data?.values || [];
   if (rows.length === 0) {
-    errors.push({ chName: "Reporting Sheet", error: "Reporting sheet is blank", type: "accessibility" });
+    errors.push({ chName: "Reporting Sheet", error: "Reporting sheet is blank or missing.", type: "accessibility" });
     return { entries, errors };
   }
 
   const { nicknameCol, linkCol, responseSheetCol, registeredTeamsCol, headerRowIdx } = detectReportingSheetColumns(rows, type);
 
   if (nicknameCol === -1 || linkCol === -1) {
-    const missing = nicknameCol === -1 ? (linkCol === -1 ? "CH Nickname and Link" : "CH Nickname") : "Link";
     errors.push({
       chName: "Reporting Sheet",
-      error: `Could not find column for ${missing} in headers. Checked first 10 rows.`,
+      error: "Could not find CH Nickname or Link columns in the reporting sheet.",
       type: "accessibility"
     });
     return { entries, errors };
   }
 
-  console.log(`[ReportingSheet] Tab: "${sheetName}", Nickname Col Index: ${nicknameCol}, Link Col Index: ${linkCol}, Response Sheet Col Index: ${responseSheetCol}, Registered Teams Col Index: ${registeredTeamsCol}, Header Row Index: ${headerRowIdx}`);
+  console.log(`[ReportingSheet] Scanning CHs starting from header row ${headerRowIdx} (CH Col: ${nicknameCol}, Link Col: ${linkCol}, ResponseSheet Col: ${responseSheetCol}, RegTeams Col: ${registeredTeamsCol})`);
 
   for (let i = headerRowIdx + 1; i < rows.length; i++) {
     const row = rows[i];
@@ -87,7 +86,18 @@ async function readChEntriesFromReportingSheet(
       continue;
     }
 
-    const responseSheetUrl = responseSheetCol !== -1 ? String(row[responseSheetCol] ?? "").trim() : "";
+    let responseSheetUrl = responseSheetCol !== -1 ? String(row[responseSheetCol] ?? "").trim() : "";
+    if (!responseSheetUrl || (!responseSheetUrl.startsWith("http") && !responseSheetUrl.startsWith("www"))) {
+      for (let c = 0; c < row.length; c++) {
+        if (c === linkCol || c === nicknameCol) continue;
+        const cellVal = String(row[c] ?? "").trim();
+        if ((cellVal.startsWith("http") || cellVal.startsWith("www") || cellVal.includes("docs.google.com")) && cellVal !== link) {
+          responseSheetUrl = cellVal;
+          break;
+        }
+      }
+    }
+
     const registeredTeams = registeredTeamsCol !== -1 ? String(row[registeredTeamsCol] ?? "").trim() : "";
 
     entries.push({ 
@@ -1045,9 +1055,11 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
   const colCount = HEADER.length;
   const requests: any[] = [];
 
-  // Duplicates tab formatting with alternating group colors
+  // Duplicates tab formatting with alternating group colors and explicit column widths
   if (dupSheetId !== undefined) {
     const dupColCount = DUP_HEADER.length;
+    
+    // Freeze header row
     requests.push({
       updateSheetProperties: {
         properties: { sheetId: dupSheetId, gridProperties: { frozenRowCount: 1 } },
@@ -1055,27 +1067,72 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
       },
     });
 
-    // Header formatting (Dark Navy)
+    // Set Header row height to 36px
+    requests.push({
+      updateDimensionProperties: {
+        range: { sheetId: dupSheetId, dimension: "ROWS", startIndex: 0, endIndex: 1 },
+        properties: { pixelSize: 36 },
+        fields: "pixelSize",
+      },
+    });
+
+    // Set Data rows height to 28px
+    if (finalDupRows.length > 1) {
+      requests.push({
+        updateDimensionProperties: {
+          range: { sheetId: dupSheetId, dimension: "ROWS", startIndex: 1, endIndex: finalDupRows.length },
+          properties: { pixelSize: 28 },
+          fields: "pixelSize",
+        },
+      });
+    }
+
+    // Header formatting (Deep Cyber Navy with bold white text)
     requests.push({
       repeatCell: {
         range: { sheetId: dupSheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: dupColCount },
         cell: {
           userEnteredFormat: {
-            backgroundColor: { red: 0.11, green: 0.13, blue: 0.22 },
+            backgroundColor: { red: 0.09, green: 0.11, blue: 0.19 },
             textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true, fontSize: 10 },
             horizontalAlignment: "CENTER",
             verticalAlignment: "MIDDLE",
+            wrapStrategy: "WRAP",
           },
         },
-        fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)",
+        fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)",
       },
     });
 
+    // Base formatting for all data rows in Duplicates Tab
+    if (finalDupRows.length > 1) {
+      requests.push({
+        repeatCell: {
+          range: { sheetId: dupSheetId, startRowIndex: 1, endRowIndex: finalDupRows.length, startColumnIndex: 0, endColumnIndex: dupColCount },
+          cell: {
+            userEnteredFormat: {
+              borders: {
+                top: { style: "SOLID", color: { red: 0.82, green: 0.84, blue: 0.88 } },
+                bottom: { style: "SOLID", color: { red: 0.82, green: 0.84, blue: 0.88 } },
+                left: { style: "SOLID", color: { red: 0.82, green: 0.84, blue: 0.88 } },
+                right: { style: "SOLID", color: { red: 0.82, green: 0.84, blue: 0.88 } },
+              },
+              horizontalAlignment: "CENTER",
+              verticalAlignment: "MIDDLE",
+              wrapStrategy: "WRAP",
+              textFormat: { fontSize: 10, foregroundColor: { red: 0.1, green: 0.12, blue: 0.2 } },
+            },
+          },
+          fields: "userEnteredFormat(borders,horizontalAlignment,verticalAlignment,wrapStrategy,textFormat)",
+        },
+      });
+    }
+
     // Color palette for alternating duplicate groups:
-    // Group 0, 2, 4... -> Soft Light Peach/Warm Yellow
-    // Group 1, 3, 5... -> Soft Light Ice Blue
-    const COLOR_PEACH = { red: 1.0, green: 0.94, blue: 0.86 };     // #FFF0DC Soft Peach
-    const COLOR_ICE_BLUE = { red: 0.92, green: 0.96, blue: 1.0 }; // #EBF5FF Soft Blue
+    // Group 0, 2, 4... -> Warm Soft Peach/Cream #FFF3E0
+    // Group 1, 3, 5... -> Soft Ice Blue #EBF5FF
+    const COLOR_PEACH = { red: 1.0, green: 0.95, blue: 0.88 };
+    const COLOR_ICE_BLUE = { red: 0.92, green: 0.96, blue: 1.0 };
 
     duplicateRowsList.forEach((item, idx) => {
       const rowIndex = idx + 1; // 1-indexed row in sheet (Row 0 is header)
@@ -1093,30 +1150,28 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
           cell: {
             userEnteredFormat: {
               backgroundColor: bgColor,
-              borders: {
-                top: { style: "SOLID", color: { red: 0.82, green: 0.82, blue: 0.82 } },
-                bottom: { style: "SOLID", color: { red: 0.82, green: 0.82, blue: 0.82 } },
-                left: { style: "SOLID", color: { red: 0.82, green: 0.82, blue: 0.82 } },
-                right: { style: "SOLID", color: { red: 0.82, green: 0.82, blue: 0.82 } },
-              },
-              horizontalAlignment: "CENTER",
-              verticalAlignment: "MIDDLE",
-              wrapStrategy: "WRAP",
-              textFormat: { fontSize: 10 },
             },
           },
-          fields: "userEnteredFormat(backgroundColor,borders,horizontalAlignment,verticalAlignment,wrapStrategy,textFormat.fontSize)",
+          fields: "userEnteredFormat.backgroundColor",
         },
       });
     });
 
-    requests.push({
-      autoResizeDimensions: {
-        dimensions: { sheetId: dupSheetId, dimension: "COLUMNS", startIndex: 0, endIndex: dupColCount },
-      },
+    // Explicit Column Widths for Diamonds Duplicates Tab:
+    // 0: CH (150px), 1: NAME (200px), 2: SERVER (90px), 3: UID (130px), 4: CODE (110px), 5: AMOUNT (100px), 6: REMARKS (200px), 7: DUPLICATED WITH CH (220px), 8: DUPLICATE TYPE (220px)
+    const dupColWidths = [150, 200, 90, 130, 110, 100, 200, 220, 220];
+    dupColWidths.forEach((width, colIdx) => {
+      requests.push({
+        updateDimensionProperties: {
+          range: { sheetId: dupSheetId, dimension: "COLUMNS", startIndex: colIdx, endIndex: colIdx + 1 },
+          properties: { pixelSize: width },
+          fields: "pixelSize",
+        },
+      });
     });
   }
 
+  // Target Diamonds Tab Formatting
   requests.push({
     updateSheetProperties: {
       properties: { sheetId: targetSheetId, gridProperties: { frozenRowCount: 1 } },
@@ -1124,12 +1179,33 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
     },
   });
 
+  // Set Header row height to 36px
+  requests.push({
+    updateDimensionProperties: {
+      range: { sheetId: targetSheetId, dimension: "ROWS", startIndex: 0, endIndex: 1 },
+      properties: { pixelSize: 36 },
+      fields: "pixelSize",
+    },
+  });
+
+  // Set Data rows height to 26px
+  if (finalRows.length > 1) {
+    requests.push({
+      updateDimensionProperties: {
+        range: { sheetId: targetSheetId, dimension: "ROWS", startIndex: 1, endIndex: finalRows.length },
+        properties: { pixelSize: 26 },
+        fields: "pixelSize",
+      },
+    });
+  }
+
+  // Header row formatting
   requests.push({
     repeatCell: {
       range: { sheetId: targetSheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: colCount },
       cell: {
         userEnteredFormat: {
-          backgroundColor: { red: 0.11, green: 0.13, blue: 0.22 },
+          backgroundColor: { red: 0.09, green: 0.11, blue: 0.19 },
           textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true, fontSize: 10 },
           horizontalAlignment: "CENTER",
           verticalAlignment: "MIDDLE",
@@ -1140,36 +1216,27 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
     },
   });
 
+  // Data rows formatting
   requests.push({
     repeatCell: {
-      range: { sheetId: targetSheetId, startRowIndex: 0, endRowIndex: finalRows.length, startColumnIndex: 0, endColumnIndex: colCount },
+      range: { sheetId: targetSheetId, startRowIndex: 1, endRowIndex: finalRows.length, startColumnIndex: 0, endColumnIndex: colCount },
       cell: {
         userEnteredFormat: {
           borders: {
-            top: { style: "SOLID", color: { red: 0.85, green: 0.85, blue: 0.85 } },
-            bottom: { style: "SOLID", color: { red: 0.85, green: 0.85, blue: 0.85 } },
-            left: { style: "SOLID", color: { red: 0.85, green: 0.85, blue: 0.85 } },
-            right: { style: "SOLID", color: { red: 0.85, green: 0.85, blue: 0.85 } },
+            top: { style: "SOLID", color: { red: 0.85, green: 0.87, blue: 0.90 } },
+            bottom: { style: "SOLID", color: { red: 0.85, green: 0.87, blue: 0.90 } },
+            left: { style: "SOLID", color: { red: 0.85, green: 0.87, blue: 0.90 } },
+            right: { style: "SOLID", color: { red: 0.85, green: 0.87, blue: 0.90 } },
           },
           horizontalAlignment: "CENTER",
           verticalAlignment: "MIDDLE",
           wrapStrategy: "WRAP",
-          textFormat: { fontSize: 10 },
+          textFormat: { fontSize: 10, foregroundColor: { red: 0.1, green: 0.12, blue: 0.2 } },
         },
       },
-      fields: "userEnteredFormat(borders,horizontalAlignment,verticalAlignment,wrapStrategy,textFormat.fontSize)",
+      fields: "userEnteredFormat(borders,horizontalAlignment,verticalAlignment,wrapStrategy,textFormat)",
     },
   });
-
-  for (let r = 2; r < finalRows.length; r += 2) {
-    requests.push({
-      repeatCell: {
-        range: { sheetId: targetSheetId, startRowIndex: r, endRowIndex: r + 1, startColumnIndex: 0, endColumnIndex: colCount },
-        cell: { userEnteredFormat: { backgroundColor: { red: 0.96, green: 0.96, blue: 0.97 } } },
-        fields: "userEnteredFormat.backgroundColor",
-      },
-    });
-  }
 
   if (job.validationEnabled) {
     const statusCol = colCount - 1;
@@ -1211,12 +1278,6 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
     });
   }
 
-  requests.push({
-    autoResizeDimensions: {
-      dimensions: { sheetId: targetSheetId, dimension: "COLUMNS", startIndex: 0, endIndex: colCount },
-    },
-  });
-
   // Highlight CH headers
   for (let r = 1; r <= finalRows.length; r++) {
     const isChHeader = finalRows[r - 1]?.[0]?.toString().startsWith("CH ");
@@ -1226,8 +1287,8 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
           range: { sheetId: targetSheetId, startRowIndex: r - 1, endRowIndex: r, startColumnIndex: 0, endColumnIndex: 1 },
           cell: {
             userEnteredFormat: {
-              backgroundColor: { red: 0.9, green: 0.9, blue: 0.98 },
-              textFormat: { bold: true, foregroundColor: { red: 0.1, green: 0.1, blue: 0.4 } }
+              backgroundColor: { red: 0.92, green: 0.94, blue: 1.0 },
+              textFormat: { bold: true, foregroundColor: { red: 0.12, green: 0.15, blue: 0.45 } }
             }
           },
           fields: "userEnteredFormat(backgroundColor,textFormat(bold,foregroundColor))",
@@ -1243,8 +1304,8 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
         range: { sheetId: targetSheetId, startRowIndex: dupIdx, endRowIndex: dupIdx + 1, startColumnIndex: 0, endColumnIndex: colCount },
         cell: {
           userEnteredFormat: {
-            backgroundColor: { red: 1, green: 0.85, blue: 0.85 },
-            textFormat: { foregroundColor: { red: 0.6, green: 0.1, blue: 0.1 }, bold: true }
+            backgroundColor: { red: 1, green: 0.88, blue: 0.88 },
+            textFormat: { foregroundColor: { red: 0.65, green: 0.1, blue: 0.1 }, bold: true }
           }
         },
         fields: "userEnteredFormat(backgroundColor,textFormat(foregroundColor,bold))",
@@ -1252,32 +1313,25 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
     });
   }
 
-  requests.push({
-    updateDimensionProperties: {
-      range: { sheetId: targetSheetId, dimension: "COLUMNS", startIndex: 0, endIndex: 1 },
-      properties: { pixelSize: 180 },
-      fields: "pixelSize",
-    },
-  });
-  requests.push({
-    updateDimensionProperties: {
-      range: { sheetId: targetSheetId, dimension: "COLUMNS", startIndex: 1, endIndex: 2 },
-      properties: { pixelSize: 220 }, // Wider NAME column
-      fields: "pixelSize",
-    },
-  });
-  requests.push({
-    updateDimensionProperties: {
-      range: { sheetId: targetSheetId, dimension: "COLUMNS", startIndex: 6, endIndex: 7 },
-      properties: { pixelSize: 300 }, // Wider REMARKS column
-      fields: "pixelSize",
-    },
+  // Explicit column widths for Diamond Rewards Tab:
+  // 0: CH (150px), 1: NAME (220px), 2: SERVER (90px), 3: UID (130px), 4: CODE (110px), 5: AMOUNT (100px), 6: REMARKS (250px), 7: STATUS (120px)
+  const diamondColWidths = [150, 220, 90, 130, 110, 100, 250];
+  if (job.validationEnabled) diamondColWidths.push(120);
+
+  diamondColWidths.forEach((width, colIdx) => {
+    requests.push({
+      updateDimensionProperties: {
+        range: { sheetId: targetSheetId, dimension: "COLUMNS", startIndex: colIdx, endIndex: colIdx + 1 },
+        properties: { pixelSize: width },
+        fields: "pixelSize",
+      },
+    });
   });
 
   requests.push({
     updateBorders: {
       range: { sheetId: targetSheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: colCount },
-      bottom: { style: "SOLID_MEDIUM", color: { red: 0.11, green: 0.13, blue: 0.22 } },
+      bottom: { style: "SOLID_MEDIUM", color: { red: 0.09, green: 0.11, blue: 0.19 } },
     },
   });
 
