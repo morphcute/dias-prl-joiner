@@ -5,6 +5,10 @@ import { prisma } from "@/lib/prisma";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
+  session: {
+    maxAge: 30 * 60, // 30 minutes session expiry
+    updateAge: 5 * 60, // Refresh session expiry every 5 minutes of activity
+  },
   providers: [
     Google({
       clientId: process.env.AUTH_GOOGLE_ID,

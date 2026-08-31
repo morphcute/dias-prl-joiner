@@ -1,5 +1,5 @@
 /**
- * Resolves shortened URLs (tinyurl, bit.ly, gothis.link, etc.)
+ * Resolves shortened URLs (tinyurl, bit.ly, gothis.link, cutt.ly, is.gd, rebrand.ly, etc.)
  * to final Google Spreadsheet URLs and extracts spreadsheet IDs.
  */
 
@@ -12,28 +12,40 @@ export interface ResolveError {
   error: string;
 }
 
-const SPREADSHEET_ID_REGEX = /\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/;
+const SPREADSHEET_ID_REGEXES = [
+  /\/spreadsheets\/(?:u\/\d+\/)?d\/([a-zA-Z0-9-_]+)/i,
+  /\/file\/d\/([a-zA-Z0-9-_]+)/i,
+  /[?&]id=([a-zA-Z0-9-_]{20,})/i,
+  /\/open\?id=([a-zA-Z0-9-_]{20,})/i,
+  /\/spreadsheets\/d\/e\/([a-zA-Z0-9-_]+)/i,
+];
 
 /**
- * Extract spreadsheet ID from a Google Sheets URL
+ * Extract spreadsheet ID from a Google Sheets or Google Drive URL
  */
-function extractSpreadsheetId(url: string): string | null {
-  const match = url.match(SPREADSHEET_ID_REGEX);
-  return match ? match[1] : null;
+export function extractSpreadsheetId(url: string): string | null {
+  if (!url) return null;
+  for (const regex of SPREADSHEET_ID_REGEXES) {
+    const match = url.match(regex);
+    if (match && match[1]) {
+      return match[1];
+    }
+  }
+  return null;
 }
 
 /**
  * Resolve a shortened URL by following redirects.
- * Supports tinyurl, bit.ly, gothis.link, and similar services.
+ * Supports tinyurl, bit.ly, gothis.link, cutt.ly, is.gd, rebrandly, and custom shortener services.
  */
 export async function resolveUrl(shortUrl: string): Promise<ResolveResult | ResolveError> {
-  let url = shortUrl.trim();
+  let url = String(shortUrl ?? "").trim();
+  if (!url) return { error: "Empty URL provided" };
 
-  // If it's already a Google Sheets URL, just extract the ID
-  if (url.includes("docs.google.com/spreadsheets")) {
-    const id = extractSpreadsheetId(url);
-    if (id) return { spreadsheetId: id, finalUrl: url };
-    return { error: "Could not extract spreadsheet ID from URL" };
+  // Check if it's already a direct Google Sheets / Drive URL with an extractable ID
+  const directId = extractSpreadsheetId(url);
+  if (directId && (url.includes("docs.google.com") || url.includes("drive.google.com"))) {
+    return { spreadsheetId: directId, finalUrl: url };
   }
 
   // Ensure URL has protocol
@@ -42,16 +54,21 @@ export async function resolveUrl(shortUrl: string): Promise<ResolveResult | Reso
   }
 
   try {
-    // Follow redirects manually to handle various shortener services
     let currentUrl = url;
     let attempts = 0;
-    const maxAttempts = 10;
+    const maxAttempts = 12;
 
     while (attempts < maxAttempts) {
       attempts++;
 
+      // Check currentUrl on every hop
+      const hopId = extractSpreadsheetId(currentUrl);
+      if (hopId && (currentUrl.includes("docs.google.com") || currentUrl.includes("drive.google.com"))) {
+        return { spreadsheetId: hopId, finalUrl: currentUrl };
+      }
+
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
 
       let response: Response;
       try {
@@ -60,62 +77,81 @@ export async function resolveUrl(shortUrl: string): Promise<ResolveResult | Reso
           redirect: "manual",
           signal: controller.signal,
           headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
           },
         });
         clearTimeout(timeoutId);
       } catch (fetchErr: any) {
         clearTimeout(timeoutId);
         if (fetchErr.name === "AbortError") {
-          return { error: `URL resolution timed out after 4s at ${currentUrl}` };
+          return { error: `URL resolution timed out after 6s at ${currentUrl}` };
         }
         return { error: `Network error resolving ${currentUrl}: ${fetchErr.message}` };
       }
 
-      // Check if we got a redirect
+      // Check for 3xx redirect
       if (response.status >= 300 && response.status < 400) {
         const location = response.headers.get("location");
         if (!location) {
           return { error: `Redirect with no location header at ${currentUrl}` };
         }
 
-        // Handle relative redirects
-        if (location.startsWith("/")) {
+        let nextUrl = location.trim();
+        if (nextUrl.startsWith("/")) {
           const urlObj = new URL(currentUrl);
-          currentUrl = `${urlObj.protocol}//${urlObj.host}${location}`;
-        } else {
-          currentUrl = location;
+          nextUrl = `${urlObj.protocol}//${urlObj.host}${nextUrl}`;
         }
 
-        // Check if we've reached a Google Sheets URL
-        const id = extractSpreadsheetId(currentUrl);
-        if (id) return { spreadsheetId: id, finalUrl: currentUrl };
+        const id = extractSpreadsheetId(nextUrl);
+        if (id && (nextUrl.includes("docs.google.com") || nextUrl.includes("drive.google.com"))) {
+          return { spreadsheetId: id, finalUrl: nextUrl };
+        }
 
+        currentUrl = nextUrl;
         continue;
       }
 
-      // If we got a 200, check if the final URL or body contains the Google Sheets URL
+      // Check for 200 OK
       if (response.ok) {
-        // Check the current URL first
-        const id = extractSpreadsheetId(currentUrl);
-        if (id) return { spreadsheetId: id, finalUrl: currentUrl };
+        const finalId = extractSpreadsheetId(currentUrl);
+        if (finalId) return { spreadsheetId: finalId, finalUrl: currentUrl };
 
-        // Some shorteners use JavaScript or meta refresh - try reading the body
         const body = await response.text();
-        
-        // Look for Google Sheets URLs in the body
-        const bodyMatch = body.match(/https:\/\/docs\.google\.com\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+
+        // Check for any Google Sheets / Drive URL in HTML body
+        const bodyMatch = body.match(/https:\/\/(?:docs|drive)\.google\.com\/(?:spreadsheets(?:\/u\/\d+)?\/d|file\/d|open\?id=)\/([a-zA-Z0-9-_]+)/i);
         if (bodyMatch) {
-          const finalUrl = bodyMatch[0];
-          return { spreadsheetId: bodyMatch[1], finalUrl };
+          const foundUrl = bodyMatch[0];
+          const extracted = extractSpreadsheetId(foundUrl) || bodyMatch[1];
+          return { spreadsheetId: extracted, finalUrl: foundUrl };
         }
 
-        // Look for meta refresh
-        const metaMatch = body.match(/content="[^"]*url=([^"]+)"/i);
+        // Check for meta refresh redirect
+        const metaMatch = body.match(/content=["'][^"']*url=([^"']+)["']/i) || body.match(/http-equiv=["']refresh["'][^>]*content=["'][^"']*url=([^"']+)["']/i);
         if (metaMatch) {
-          currentUrl = metaMatch[1];
-          const metaId = extractSpreadsheetId(currentUrl);
-          if (metaId) return { spreadsheetId: metaId, finalUrl: currentUrl };
+          let nextUrl = metaMatch[1].trim();
+          if (nextUrl.startsWith("/")) {
+            const urlObj = new URL(currentUrl);
+            nextUrl = `${urlObj.protocol}//${urlObj.host}${nextUrl}`;
+          }
+          const metaId = extractSpreadsheetId(nextUrl);
+          if (metaId) return { spreadsheetId: metaId, finalUrl: nextUrl };
+          currentUrl = nextUrl;
+          continue;
+        }
+
+        // Check for JS redirect (location.href = "...", window.location = "...")
+        const jsMatch = body.match(/(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/i) || body.match(/location\.replace\s*\(\s*["']([^"']+)["']\s*\)/i);
+        if (jsMatch) {
+          let nextUrl = jsMatch[1].trim();
+          if (nextUrl.startsWith("/")) {
+            const urlObj = new URL(currentUrl);
+            nextUrl = `${urlObj.protocol}//${urlObj.host}${nextUrl}`;
+          }
+          const jsId = extractSpreadsheetId(nextUrl);
+          if (jsId) return { spreadsheetId: jsId, finalUrl: nextUrl };
+          currentUrl = nextUrl;
           continue;
         }
 

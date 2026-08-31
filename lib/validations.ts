@@ -95,54 +95,98 @@ export function isAgeHeader(val: string): boolean {
 
 /**
  * Checks if a header value corresponds to Team Name / Squad Name.
+ * Matches any variation asking for the Team Name, such as:
+ * - "Your Team Name"
+ * - "Whats Your Team Name?"
+ * - "What's your team name?"
+ * - "What is your team name?"
+ * - "Team Name"
+ * - "Team Name / Squad Name"
+ * - "Squad Name"
+ * - "Clan Name"
+ * - "Pangalan ng Team"
+ * - "Enter Team Name"
  */
 export function isTeamNameHeader(val: string): boolean {
-  const v = val.toUpperCase().trim();
+  if (!val) return false;
+  const raw = String(val).trim();
+  const v = raw.toUpperCase();
   if (!v) return false;
-  // Exclude player / member / captain / ign / uid / server / age / email / timestamp
+
+  // Clean string by removing punctuation / special characters
+  const clean = v.replace(/[^A-Z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+
+  // 1. Direct matches for Team Name variations (Matches "Your Team Name", "Whats Your Team Name?", "What is your team name?", "Team Name", "Squad Name", etc.)
   if (
-    v.includes("PLAYER") ||
-    v.includes("MEMBER") ||
-    v.includes("CAPTAIN") ||
-    v.includes("LEADER") ||
-    v.includes("IGN") ||
-    v.includes("UID") ||
-    v.includes("USER ID") ||
-    v.includes("GAME ID") ||
-    v.includes("SERVER") ||
-    v.includes("ZONE") ||
-    isAgeHeader(v) ||
-    v.includes("EMAIL") ||
-    v.includes("TIMESTAMP")
+    clean.includes("TEAM NAME") ||
+    clean.includes("YOUR TEAM") ||
+    clean.includes("SQUAD NAME") ||
+    clean.includes("YOUR SQUAD") ||
+    clean.includes("CLAN NAME") ||
+    clean.includes("GROUP NAME") ||
+    clean.includes("TEAM S NAME") ||
+    clean.includes("SQUAD S NAME") ||
+    clean.includes("NAME OF TEAM") ||
+    clean.includes("NAME OF THE TEAM") ||
+    clean.includes("NAME OF SQUAD") ||
+    clean.includes("NAME OF THE SQUAD") ||
+    clean.includes("PANGALAN NG TEAM") ||
+    clean.includes("PANGALAN NG IYONG TEAM") ||
+    clean.includes("PANGALAN NG INYONG TEAM") ||
+    clean.includes("PANGALAN NG SQUAD") ||
+    clean.includes("PANGALAN NG KOPONAN") ||
+    clean.includes("TEAM SQUAD NAME") ||
+    clean.includes("SQUAD TEAM NAME") ||
+    clean.includes("ENTER TEAM") ||
+    clean.includes("ENTER YOUR TEAM")
   ) {
-    return false;
+    // Only exclude if it's explicitly asking for individual player/captain personal name or agreements/rules
+    if (
+      clean.includes("CAPTAIN NAME") ||
+      clean.includes("CAPTAINS NAME") ||
+      clean.includes("LEADER NAME") ||
+      clean.includes("LEADERS NAME") ||
+      clean.includes("PLAYER 1") ||
+      clean.includes("MEMBER 1") ||
+      clean.includes("PLAYER NAME") ||
+      clean.includes("PLAYERS NAME") ||
+      clean.includes("PLAYER S NAME") ||
+      clean.includes("FULL NAME") ||
+      clean.includes("FULLNAME") ||
+      clean.includes("FACEBOOK") ||
+      clean.includes("PROFILE") ||
+      clean.includes("UNDERSTAND") ||
+      clean.includes("RULES") ||
+      clean.includes("AGREE") ||
+      clean.includes("TERMS") ||
+      clean.includes("EMAIL") ||
+      clean.includes("TIMESTAMP") ||
+      clean.includes("PROOF") ||
+      clean.includes("PHOTO") ||
+      clean.includes("SCREENSHOT") ||
+      clean.includes("UID") ||
+      clean.includes("SERVER") ||
+      clean.includes("IGN")
+    ) {
+      return false;
+    }
+    return true;
   }
+
+  // 2. Exact match cases for simple CH summary tables
   if (
-    v === "YOUR TEAM NAME" ||
-    v === "TEAM NAME" ||
-    v === "YOUR SQUAD NAME" ||
-    v === "SQUAD NAME" ||
-    v === "TEAM" ||
-    v === "SQUAD" ||
-    v === "TEAM / SQUAD" ||
-    v === "TEAM/SQUAD" ||
-    v === "CLAN" ||
-    v === "CLAN NAME" ||
-    v === "GROUP NAME" ||
-    v.includes("TEAM NAME") ||
-    v.includes("SQUAD NAME") ||
-    v.includes("YOUR TEAM") ||
-    v.includes("YOUR SQUAD") ||
-    v.includes("NAME OF TEAM") ||
-    v.includes("NAME OF SQUAD") ||
-    v.includes("PANGALAN NG TEAM") ||
-    v.includes("PANGALAN NG SQUAD") ||
-    v.includes("TEAM/SQUAD") ||
-    v.includes("TEAM / SQUAD") ||
-    /\b(TEAM|SQUAD|CLAN)\b/.test(v)
+    clean === "TEAM" ||
+    clean === "TEAMS" ||
+    clean === "SQUAD" ||
+    clean === "SQUADS" ||
+    clean === "TEAM SQUAD" ||
+    clean === "SQUAD TEAM" ||
+    clean === "CLAN" ||
+    clean === "KOPONAN"
   ) {
     return true;
   }
+
   return false;
 }
 
@@ -301,30 +345,37 @@ export function detectReportingSheetColumns(
       const val = String(row[c] ?? "").trim().toUpperCase();
       if (!val) continue;
 
-      // Detect "CH Nickname" column by header name
+      // Detect "CH Nickname" column by header name (prioritize NICKNAME over FULL NAME)
       if (
         !val.includes("TEAM") &&
         !val.includes("GAME") &&
         !val.includes("RESPONSE") &&
         !val.includes("SHEET") &&
-        !val.includes("LIST") &&
-        (
+        !val.includes("LIST")
+      ) {
+        if (
           val === "CH NICKNAME" ||
           val === "NICKNAME" ||
-          val === "CH" ||
-          val === "HOST" ||
           val === "HOST NICKNAME" ||
-          val === "HOST NAME" ||
-          val === "CH NAME" ||
-          val === "CH FULL NAME" ||
-          val === "COMMUNITY HOST" ||
           val === "COMMUNITY HOST NICKNAME" ||
-          (val.includes("NICKNAME") && (val.includes("CH") || val.includes("HOST"))) ||
-          (val.includes("NAME") && (val.includes("CH") || val.includes("HOST"))) ||
-          val.includes("COMMUNITY HOST")
-        )
-      ) {
-        nicknameCol = c;
+          (val.includes("NICKNAME") && (val.includes("CH") || val.includes("HOST")))
+        ) {
+          nicknameCol = c;
+        } else if (
+          nicknameCol === -1 &&
+          (
+            val === "CH" ||
+            val === "HOST" ||
+            val === "HOST NAME" ||
+            val === "CH NAME" ||
+            val === "CH FULL NAME" ||
+            val === "COMMUNITY HOST" ||
+            (val.includes("NAME") && (val.includes("CH") || val.includes("HOST"))) ||
+            val.includes("COMMUNITY HOST")
+          )
+        ) {
+          nicknameCol = c;
+        }
       }
 
       // Detect "Tournament Response Sheet" column by header name

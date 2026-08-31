@@ -56,6 +56,24 @@ async function readChEntriesFromReportingSheet(
     return { entries, errors };
   }
 
+  // Also fetch formulas so that =HYPERLINK("...", "...") URLs are never lost
+  let formulaRows: string[][] = [];
+  try {
+    const formulaResult = await withRetry(
+      () => sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${sheetName}'!A1:AZ300`,
+        valueRenderOption: "FORMULA",
+      }),
+      1,
+      500,
+      `Read Reporting Sheet Formulas (${sheetName})`
+    );
+    formulaRows = (formulaResult as any)?.data?.values || [];
+  } catch (e) {
+    console.log("[ReportingSheet] Formula read notice:", e);
+  }
+
   // Detect columns dynamically
   const { nicknameCol, linkCol, responseSheetCol, registeredTeamsCol, headerRowIdx } = detectReportingSheetColumns(rows, type);
 
@@ -70,13 +88,78 @@ async function readChEntriesFromReportingSheet(
 
   console.log(`[ReportingSheet] Scanning CHs starting from header row ${headerRowIdx} (CH Col: ${nicknameCol}, Link Col: ${linkCol}, ResponseSheet Col: ${responseSheetCol}, RegTeams Col: ${registeredTeamsCol})`);
 
-    // Extract entries starting from the row after headers
+  // Extract entries starting from the row after headers
   for (let i = headerRowIdx + 1; i < rows.length; i++) {
     const row = rows[i];
+    const formulaRow = formulaRows[i] || [];
     const chNickname = String(row[nicknameCol] ?? "").trim();
-    const link = String(row[linkCol] ?? "").trim();
 
+    // If nickname column is empty, this is an area separator row or spacing row -> skip cleanly!
     if (!chNickname) continue;
+
+    let responseSheetUrl = "";
+    if (responseSheetCol !== -1) {
+      const candidate = String(row[responseSheetCol] ?? "").trim();
+      const formulaCandidate = String(formulaRow[responseSheetCol] ?? "").trim();
+      if (formulaCandidate.includes("http")) {
+        const match = formulaCandidate.match(/https?:\/\/[^\s"'<>\)]+/);
+        if (match) {
+          responseSheetUrl = match[0];
+        }
+      }
+      if (!responseSheetUrl && (candidate.startsWith("http") || candidate.startsWith("www") || candidate.includes("docs.google.com") || candidate.includes("bit.ly") || candidate.includes("tinyurl"))) {
+        responseSheetUrl = candidate;
+      }
+    }
+
+    let link = String(row[linkCol] ?? "").trim();
+    const formulaLink = String(formulaRow[linkCol] ?? "").trim();
+    if (formulaLink.includes("http")) {
+      const match = formulaLink.match(/https?:\/\/[^\s"'<>\)]+/);
+      if (match) link = match[0];
+    }
+
+    // If link is still empty or not a valid URL, search row for any other URL that is NOT responseSheetUrl
+    if (!link || (!link.startsWith("http") && !link.startsWith("www"))) {
+      for (let c = 0; c < row.length; c++) {
+        if (c === nicknameCol || c === responseSheetCol) continue;
+        const cellVal = String(row[c] ?? "").trim();
+        const cellFormula = String(formulaRow[c] ?? "").trim();
+        let candidate = "";
+        if (cellFormula.includes("http")) {
+          const m = cellFormula.match(/https?:\/\/[^\s"'<>\)]+/);
+          if (m) candidate = m[0];
+        }
+        if (!candidate && (cellVal.startsWith("http") || cellVal.startsWith("www") || cellVal.includes("docs.google.com") || cellVal.includes("bit.ly") || cellVal.includes("tinyurl"))) {
+          candidate = cellVal;
+        }
+        if (candidate && candidate !== responseSheetUrl) {
+          link = candidate;
+          break;
+        }
+      }
+    }
+
+    // If responseSheetUrl was not found yet, scan row for any remaining URL cell that is NOT link
+    if (!responseSheetUrl) {
+      for (let c = 0; c < row.length; c++) {
+        if (c === nicknameCol || c === linkCol) continue;
+        const cellVal = String(row[c] ?? "").trim();
+        const cellFormula = String(formulaRow[c] ?? "").trim();
+        let candidate = "";
+        if (cellFormula.includes("http")) {
+          const m = cellFormula.match(/https?:\/\/[^\s"'<>\)]+/);
+          if (m) candidate = m[0];
+        }
+        if (!candidate && (cellVal.startsWith("http") || cellVal.startsWith("www") || cellVal.includes("docs.google.com") || cellVal.includes("bit.ly") || cellVal.includes("tinyurl"))) {
+          candidate = cellVal;
+        }
+        if (candidate && candidate !== link) {
+          responseSheetUrl = candidate;
+          break;
+        }
+      }
+    }
 
     // Check if there is a link
     const isNoLink = !link;
@@ -87,6 +170,8 @@ async function readChEntriesFromReportingSheet(
       link.toUpperCase() === "EVENT" ||
       (!link.startsWith("http") && !link.startsWith("www"));
 
+    const registeredTeams = registeredTeamsCol !== -1 ? String(row[registeredTeamsCol] ?? "").trim() : "";
+
     if (isInvalidLink) {
       const errorDetail = isNoLink
         ? "No link provided (Did not follow the rules)"
@@ -96,23 +181,14 @@ async function readChEntriesFromReportingSheet(
         error: errorDetail,
         type: "rule_violation"
       });
+      entries.push({ 
+        chName: chNickname, 
+        url: "",
+        responseSheetUrl,
+        registeredTeams
+      });
       continue;
     }
-
-    let responseSheetUrl = responseSheetCol !== -1 ? String(row[responseSheetCol] ?? "").trim() : "";
-    // If responseSheetUrl is empty or not a link, scan row for any other Google Sheets / URL cell
-    if (!responseSheetUrl || (!responseSheetUrl.startsWith("http") && !responseSheetUrl.startsWith("www"))) {
-      for (let c = 0; c < row.length; c++) {
-        if (c === linkCol || c === nicknameCol) continue;
-        const cellVal = String(row[c] ?? "").trim();
-        if ((cellVal.startsWith("http") || cellVal.startsWith("www") || cellVal.includes("docs.google.com")) && cellVal !== link) {
-          responseSheetUrl = cellVal;
-          break;
-        }
-      }
-    }
-
-    const registeredTeams = registeredTeamsCol !== -1 ? String(row[registeredTeamsCol] ?? "").trim() : "";
 
     entries.push({ 
       chName: chNickname, 
@@ -122,7 +198,8 @@ async function readChEntriesFromReportingSheet(
     });
   }
 
-  console.log(`[ReportingSheet] Found ${entries.length} valid CH entries with links dynamically`);
+  console.log(`[ReportingSheet] Scanning CHs in "${sheetName}": Found ${entries.length} valid CH entries`);
+  console.log(`[ReportingSheet] List of CHs: ${entries.map(e => e.chName).join(", ")}`);
 
   return { entries, errors };
 }
@@ -219,6 +296,35 @@ function extractPlayerSlotNumber(header: string): number | null {
 }
 
 /**
+ * Checks if a cell value looks like an agreement, consent, or checkbox response
+ * (e.g. "Yes, I understand.", "I agree", "Yes", "Agree", etc.) rather than a team name.
+ */
+function isAgreementValue(val: string): boolean {
+  if (!val) return false;
+  const v = String(val).trim().toLowerCase();
+  if (!v) return false;
+  return (
+    v === "yes" ||
+    v === "no" ||
+    v === "true" ||
+    v === "false" ||
+    v === "agree" ||
+    v === "i agree" ||
+    v === "yes, i understand" ||
+    v === "yes, i understand." ||
+    v === "yes i understand" ||
+    v === "yes, i agree" ||
+    v === "yes, i agree." ||
+    v === "yes i agree" ||
+    v === "understood" ||
+    v.startsWith("yes,") ||
+    v.startsWith("yes ") ||
+    v.includes("understand") ||
+    v.includes("i agree")
+  );
+}
+
+/**
  * Extracts team names, player-to-team mapping, and multi-player age mapping from the CH's Tournament Response Sheet (Google Form Responses).
  * Detects player slots (1st Player's Age, 2nd Player's Age, etc.) and accurately links each player to their respective age and team name.
  */
@@ -243,15 +349,60 @@ async function getTeamMapFromResponseSheet(
     if ("error" in resResult) return { teamNames, playerTeamMap, playerAgeMap, teamSlotAgeMap };
 
     const resSpreadsheetId = (resResult as ResolveResult).spreadsheetId;
-    const resSheet = await withRetry(
-      () => sheets.spreadsheets.values.get({
-        spreadsheetId: resSpreadsheetId,
-        range: "A1:AZ300",
-      }),
-      2,
-      1000,
-      "Read Tournament Response Sheet"
-    );
+
+    // Detect target response tab (e.g. Form_Responses, Form Responses 1, Responses)
+    let targetTabTitle = "";
+    try {
+      const meta = await withRetry(
+        () => sheets.spreadsheets.get({
+          spreadsheetId: resSpreadsheetId,
+        }),
+        2,
+        1000,
+        "Get Response Sheet Metadata"
+      );
+
+      const sheetList = (meta as any)?.data?.sheets || [];
+      if (sheetList.length > 0) {
+        const responseTab = sheetList.find((s: any) => {
+          const t = String(s.properties?.title || "").toUpperCase();
+          return t.includes("RESPONSE") || t.includes("FORM");
+        });
+        targetTabTitle = responseTab?.properties?.title || sheetList[0]?.properties?.title || "";
+      }
+    } catch (e) {
+      console.log("[ResponseSheet] Metadata fetch notice:", e);
+    }
+
+    let resSheet: any = null;
+    if (targetTabTitle) {
+      try {
+        const escapedTitle = targetTabTitle.replace(/'/g, "''");
+        resSheet = await withRetry(
+          () => sheets.spreadsheets.values.get({
+            spreadsheetId: resSpreadsheetId,
+            range: `'${escapedTitle}'!A1:ZZ1000`,
+          }),
+          1,
+          500,
+          `Read Tournament Response Sheet (${targetTabTitle})`
+        );
+      } catch (e) {
+        console.log(`[ResponseSheet] Tab '${targetTabTitle}' read notice, trying default range:`, e);
+      }
+    }
+
+    if (!resSheet || !(resSheet as any)?.data?.values?.length) {
+      resSheet = await withRetry(
+        () => sheets.spreadsheets.values.get({
+          spreadsheetId: resSpreadsheetId,
+          range: "A1:ZZ1000",
+        }),
+        2,
+        1000,
+        "Read Tournament Response Sheet Default"
+      );
+    }
 
     const rows = (resSheet as any)?.data?.values || [];
     if (rows.length < 2) return { teamNames, playerTeamMap, playerAgeMap, teamSlotAgeMap };
@@ -259,6 +410,18 @@ async function getTeamMapFromResponseSheet(
     // Find header row in Response Sheet (usually row 0)
     let headerRowIdx = -1;
     let teamNameCol = -1;
+
+    // 1. Dedicated scan for Team Name column header across top 10 rows
+    for (let r = 0; r < Math.min(rows.length, 10); r++) {
+      for (let c = 0; c < (rows[r]?.length || 0); c++) {
+        const val = String(rows[r][c] ?? "").trim();
+        if (isTeamNameHeader(val)) {
+          teamNameCol = c;
+          break;
+        }
+      }
+      if (teamNameCol !== -1) break;
+    }
 
     interface SlotCols {
       nameCol?: number;
@@ -275,7 +438,7 @@ async function getTeamMapFromResponseSheet(
     const sequentialServerCols: number[] = [];
     const sequentialAgeCols: number[] = [];
 
-    for (let r = 0; r < Math.min(rows.length, 5); r++) {
+    for (let r = 0; r < Math.min(rows.length, 10); r++) {
       const row = rows[r];
       let foundHeadersInRow = false;
 
@@ -294,7 +457,7 @@ async function getTeamMapFromResponseSheet(
         const isUid = val.includes("UID") || val.includes("USER ID") || val.includes("GAME ID") || val.includes("ACCOUNT ID") || val === "ID";
         const isIgn = val.includes("IGN") || val.includes("GAME NAME") || val.includes("IN GAME NAME") || val.includes("IN-GAME NAME") || val.includes("NICKNAME");
         const isServer = val.includes("SERVER") || val.includes("ZONE") || val === "ZONE ID" || val === "SERVER ID";
-        const isName = (val.includes("NAME") || val.includes("PLAYER") || val.includes("CAPTAIN") || val.includes("FULLNAME") || val.includes("FULL NAME")) && !isAge && !isUid && !isIgn && !isServer && !val.includes("TEAM") && !val.includes("SQUAD");
+        const isName = (val.includes("NAME") || val.includes("PLAYER") || val.includes("CAPTAIN") || val.includes("FULLNAME") || val.includes("FULL NAME")) && !isAge && !isUid && !isIgn && !isServer && !isTeamNameHeader(val);
 
         if (isAge || isUid || isIgn || isServer || isName) {
           foundHeadersInRow = true;
@@ -329,27 +492,46 @@ async function getTeamMapFromResponseSheet(
       headerRowIdx = 0;
     }
 
-    // Fallback if teamNameCol not explicitly named
-    if (teamNameCol === -1 && rows.length > 0) {
-      for (let c = 0; c < (rows[0]?.length || 0); c++) {
-        const headerVal = String(rows[0][c] ?? "").toUpperCase().trim();
-        if (
-          !headerVal.includes("TIMESTAMP") &&
-          !headerVal.includes("EMAIL") &&
-          !headerVal.includes("SCORE") &&
-          (!explicitSlots.has(1) || (
-            explicitSlots.get(1)?.nameCol !== c &&
-            explicitSlots.get(1)?.ignCol !== c &&
-            explicitSlots.get(1)?.uidCol !== c &&
-            explicitSlots.get(1)?.serverCol !== c &&
-            explicitSlots.get(1)?.ageCol !== c
-          ))
-        ) {
-          teamNameCol = c;
-          break;
+    // Verify candidate teamNameCol by checking that rows don't contain agreement values ("Yes, I understand")
+    if (teamNameCol !== -1) {
+      let agreementCount = 0;
+      let sampleCount = 0;
+      for (let r = headerRowIdx + 1; r < Math.min(rows.length, headerRowIdx + 6); r++) {
+        const cellVal = String(rows[r]?.[teamNameCol] ?? "").trim();
+        if (cellVal) {
+          sampleCount++;
+          if (isAgreementValue(cellVal)) agreementCount++;
         }
       }
-      if (teamNameCol === -1) teamNameCol = 2;
+      if (sampleCount > 0 && agreementCount / sampleCount >= 0.5) {
+        teamNameCol = -1; // Invalidate agreement column
+      }
+    }
+
+    // Fallback: search explicitly across all top rows for a header matching isTeamNameHeader
+    if (teamNameCol === -1 && rows.length > 0) {
+      for (let r = 0; r < Math.min(rows.length, 5); r++) {
+        for (let c = 0; c < (rows[r]?.length || 0); c++) {
+          const headerVal = String(rows[r][c] ?? "").trim();
+          if (isTeamNameHeader(headerVal)) {
+            // Check that values are not agreement values
+            let sampleAgr = 0;
+            let sampleTotal = 0;
+            for (let testR = r + 1; testR < Math.min(rows.length, r + 6); testR++) {
+              const testVal = String(rows[testR]?.[c] ?? "").trim();
+              if (testVal) {
+                sampleTotal++;
+                if (isAgreementValue(testVal)) sampleAgr++;
+              }
+            }
+            if (sampleTotal === 0 || sampleAgr / sampleTotal < 0.5) {
+              teamNameCol = c;
+              break;
+            }
+          }
+        }
+        if (teamNameCol !== -1) break;
+      }
     }
 
     const hasExplicitSlots = explicitSlots.size > 0;
@@ -358,7 +540,8 @@ async function getTeamMapFromResponseSheet(
     // Extract team names and build player -> team mapping & player -> age mapping
     for (let r = headerRowIdx + 1; r < rows.length; r++) {
       const row = rows[r];
-      const teamName = teamNameCol !== -1 ? String(row[teamNameCol] ?? "").trim() : "";
+      const rawTeam = teamNameCol !== -1 ? String(row[teamNameCol] ?? "").trim() : "";
+      const teamName = isAgreementValue(rawTeam) ? "" : rawTeam;
       if (teamName) {
         teamNames.push(teamName);
       }
@@ -436,6 +619,7 @@ async function getTeamMapFromResponseSheet(
         }
       };
 
+      // 1. Map explicit slots
       if (hasExplicitSlots) {
         sortedSlotNumbers.forEach((slotNum, idx) => {
           const cols = explicitSlots.get(slotNum)!;
@@ -447,23 +631,55 @@ async function getTeamMapFromResponseSheet(
 
           registerPlayerMapping(nameVal, ignVal, uidVal, serverVal, ageVal, idx);
         });
-      } else {
-        const maxPlayersInRow = Math.max(
-          sequentialNameCols.length,
-          sequentialIgnCols.length,
-          sequentialUidCols.length,
-          sequentialAgeCols.length,
-          1
-        );
+      }
 
-        for (let k = 0; k < maxPlayersInRow; k++) {
-          const nameVal = sequentialNameCols[k] !== undefined ? String(row[sequentialNameCols[k]] ?? "") : "";
-          const ignVal = sequentialIgnCols[k] !== undefined ? String(row[sequentialIgnCols[k]] ?? "") : "";
-          const uidVal = sequentialUidCols[k] !== undefined ? String(row[sequentialUidCols[k]] ?? "") : "";
-          const serverVal = sequentialServerCols[k] !== undefined ? String(row[sequentialServerCols[k]] ?? "") : "";
-          const ageVal = sequentialAgeCols[k] !== undefined ? String(row[sequentialAgeCols[k]] ?? "") : "";
+      // 2. ALSO map sequential columns (ensuring members/reserves in slots 2, 3, 4, 5, 6 are never skipped)
+      const maxPlayersInRow = Math.max(
+        sequentialNameCols.length,
+        sequentialIgnCols.length,
+        sequentialUidCols.length,
+        sequentialAgeCols.length,
+        0
+      );
 
-          registerPlayerMapping(nameVal, ignVal, uidVal, serverVal, ageVal, k);
+      for (let k = 0; k < maxPlayersInRow; k++) {
+        const nameVal = sequentialNameCols[k] !== undefined ? String(row[sequentialNameCols[k]] ?? "") : "";
+        const ignVal = sequentialIgnCols[k] !== undefined ? String(row[sequentialIgnCols[k]] ?? "") : "";
+        const uidVal = sequentialUidCols[k] !== undefined ? String(row[sequentialUidCols[k]] ?? "") : "";
+        const serverVal = sequentialServerCols[k] !== undefined ? String(row[sequentialServerCols[k]] ?? "") : "";
+        const ageVal = sequentialAgeCols[k] !== undefined ? String(row[sequentialAgeCols[k]] ?? "") : "";
+
+        registerPlayerMapping(nameVal, ignVal, uidVal, serverVal, ageVal, k);
+      }
+
+      // 3. Row-level comprehensive mapping: every player attribute in this row belongs to this team!
+      if (teamName) {
+        for (let c = 0; c < row.length; c++) {
+          if (c === teamNameCol) continue;
+          const cellStr = String(row[c] ?? "").trim();
+          if (!cellStr) continue;
+          if (cellStr.startsWith("http") || cellStr.includes("@") || isAgreementValue(cellStr)) continue;
+
+          // Map any UIDs found in this cell (6 to 12 digits)
+          const allUids = cellStr.match(/\d{6,12}/g) || [];
+          for (const u of allUids) {
+            playerTeamMap.set(u.toLowerCase(), teamName);
+          }
+          const pureDigits = cellStr.replace(/\D/g, "");
+          if (pureDigits.length >= 6 && pureDigits.length <= 12) {
+            playerTeamMap.set(pureDigits.toLowerCase(), teamName);
+          }
+
+          // Map IGNs and Player Names (length 2 to 40, not purely digits)
+          if (cellStr.length >= 2 && cellStr.length <= 40 && !/^\d+$/.test(cellStr)) {
+            const lower = cellStr.toLowerCase();
+            const clean = lower.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
+            const noSpace = lower.replace(/[^a-z0-9]/g, "");
+
+            playerTeamMap.set(lower, teamName);
+            if (clean) playerTeamMap.set(clean, teamName);
+            if (noSpace) playerTeamMap.set(noSpace, teamName);
+          }
         }
       }
     }
@@ -606,25 +822,44 @@ export async function syncPrl(job: JoinerJob, runId: string) {
 
   for (let i = 0; i < chEntries.length; i += URL_CONCURRENCY) {
     const batch = chEntries.slice(i, i + URL_CONCURRENCY);
-    await Promise.all(
+    const batchResults = await Promise.all(
       batch.map(async (ch) => {
         const result = await resolveUrl(ch.url);
         resolvedCount++;
         const pct = 5 + Math.floor((resolvedCount / totalCh) * 15);
         await updateProgress(pct, `Resolving URLs: ${resolvedCount}/${totalCh}`);
-
-        if ("error" in result) {
-          errors.push({ chName: ch.chName, error: `URL Resolution Failed: ${result.error}` });
-        } else {
-          resolvedEntries.push({
-            chName: ch.chName,
-            spreadsheetId: (result as ResolveResult).spreadsheetId,
-            responseSheetUrl: ch.responseSheetUrl,
-            registeredTeams: ch.registeredTeams,
-          });
-        }
+        return { ch, result };
       })
     );
+
+    for (const item of batchResults) {
+      if (!item.ch.url) {
+        console.log(`[URL Resolver] ⚠️  CH ${item.ch.chName}: NO LINK (Will write CH name to output with 0 players)`);
+        resolvedEntries.push({
+          chName: item.ch.chName,
+          spreadsheetId: "",
+          responseSheetUrl: item.ch.responseSheetUrl,
+          registeredTeams: item.ch.registeredTeams,
+        });
+      } else if ("error" in item.result) {
+        console.log(`[URL Resolver] ❌ CH ${item.ch.chName}: FAILED "${item.ch.url}" (${item.result.error})`);
+        errors.push({ chName: item.ch.chName, error: `URL Resolution Failed: ${item.result.error}` });
+        resolvedEntries.push({
+          chName: item.ch.chName,
+          spreadsheetId: "",
+          responseSheetUrl: item.ch.responseSheetUrl,
+          registeredTeams: item.ch.registeredTeams,
+        });
+      } else {
+        console.log(`[URL Resolver] ✅ CH ${item.ch.chName}: RESOLVED -> Spreadsheet ID: ${item.result.spreadsheetId}`);
+        resolvedEntries.push({
+          chName: item.ch.chName,
+          spreadsheetId: (item.result as ResolveResult).spreadsheetId,
+          responseSheetUrl: item.ch.responseSheetUrl,
+          registeredTeams: item.ch.registeredTeams,
+        });
+      }
+    }
   }
 
   const getRegisteredTeamsCount = async (chEntry: any) => {
@@ -641,10 +876,10 @@ export async function syncPrl(job: JoinerJob, runId: string) {
               spreadsheetId: resSpreadsheetId,
               range: "A1:Z100",
             }),
-            1,
-            500,
-            "Teams Count",
-            3000
+            2,
+            1000,
+            `Teams Count (${chEntry?.chName || "CH"})`,
+            15000
           );
           const resRows = (resSheet as any)?.data?.values || [];
           if (resRows.length > 0) {
@@ -688,6 +923,10 @@ export async function syncPrl(job: JoinerJob, runId: string) {
     return { count: "0", source: "none" };
   };
 
+  // Global aggregated maps across all CH response sheets
+  const globalPlayerTeamMap = new Map<string, string>();
+  const globalPlayerAgeMap = new Map<string, string>();
+
   // Response Sheet Cache Map for fast on-demand team name and age lookup
   const responseSheetCache = new Map<
     string,
@@ -698,6 +937,7 @@ export async function syncPrl(job: JoinerJob, runId: string) {
       teamSlotAgeMap: Map<string, string>;
     }
   >();
+
   const fetchChTeamMap = async (resUrl?: string) => {
     if (!resUrl)
       return {
@@ -709,8 +949,31 @@ export async function syncPrl(job: JoinerJob, runId: string) {
     if (responseSheetCache.has(resUrl)) return responseSheetCache.get(resUrl)!;
     const res = await getTeamMapFromResponseSheet(sheets, resUrl);
     responseSheetCache.set(resUrl, res);
+
+    for (const [k, v] of res.playerTeamMap.entries()) {
+      if (v && !globalPlayerTeamMap.has(k)) {
+        globalPlayerTeamMap.set(k, v);
+      }
+    }
+    for (const [k, v] of res.playerAgeMap.entries()) {
+      if (v && !globalPlayerAgeMap.has(k)) {
+        globalPlayerAgeMap.set(k, v);
+      }
+    }
+
     return res;
   };
+
+  // Pre-fetch all available response sheets in parallel to populate global player map
+  try {
+    const urlsToFetch = resolvedEntries.map(e => e.responseSheetUrl).filter(Boolean);
+    const uniqueUrls = Array.from(new Set(urlsToFetch));
+    await Promise.all(
+      uniqueUrls.map(url => fetchChTeamMap(url).catch(err => console.log("[PRL] Response sheet prefetch notice:", err)))
+    );
+  } catch (e) {
+    console.log("[PRL] Response sheet prefetch batch notice:", e);
+  }
 
   // Determine game mode multiplier
   const gameModeStr = (job as any).gameMode || "5v5";
@@ -734,18 +997,76 @@ export async function syncPrl(job: JoinerJob, runId: string) {
       return { rowsWritten: 0, success: false, errors };
     }
 
+    let chHeaderAdded = false;
+    let validRowCount = 0;
+
+    if (!spreadsheetId) {
+      // CH had no link or invalid URL: paste CH name with empty player cells
+      console.log(`[PRL Sheet] ⚠️  CH [${i + 1}/${resolvedEntries.length}] ${chName}: NO PRL LINK (Added header row with 0 players)`);
+      const rowData = [`CH ${chName}`, "", "", "", "", ""];
+      if (job.validationEnabled) {
+        rowData.push("");
+      }
+      allRows.push(rowData);
+      chStats.push({ chName, count: 0 });
+      continue;
+    }
+
     try {
-      const data = await withRetry(
+      // 1. Direct fast read of default range A1:Z (no metadata overhead)
+      let data = await withRetry(
         () => sheets.spreadsheets.values.get({
           spreadsheetId,
           range: "A1:Z",
         }),
-        3,
-        1500,
-        `Read CH Sheet (${chName})`
+        2,
+        1000,
+        `Read CH Sheet (${chName})`,
+        15000
       );
 
-      const rows = data.data.values;
+      let rows = data.data.values || [];
+
+      // 2. ONLY IF the default tab returned < 3 rows (e.g. hidden tabs like Ranjhay or multi-tab like MadamBridgette), inspect tabs as a fallback
+      if (rows.length < 3) {
+        try {
+          const meta = await withRetry(
+            () => sheets.spreadsheets.get({ spreadsheetId }),
+            1,
+            500,
+            `Get Tabs Fallback (${chName})`,
+            8000
+          );
+          const sheetList = (meta as any)?.data?.sheets || [];
+          const visibleTabs = sheetList.filter((s: any) => !s.properties?.hidden);
+          const tabsToConsider = visibleTabs.length > 0 ? visibleTabs : sheetList;
+
+          if (tabsToConsider.length > 1) {
+            const validTabs = tabsToConsider.filter((s: any) => {
+              const title = String(s.properties?.title || "").toUpperCase().trim();
+              return !title.includes("TEMPLATE") && !title.includes("MM/DD/YY") && !title.includes("GUIDE") && !title.includes("INSTRUCTION");
+            });
+            const targetTab = (validTabs.length > 0 ? validTabs[0] : tabsToConsider[0])?.properties?.title || "";
+            if (targetTab) {
+              const fallbackData = await withRetry(
+                () => sheets.spreadsheets.values.get({
+                  spreadsheetId,
+                  range: `'${targetTab.replace(/'/g, "''")}'!A1:Z`,
+                }),
+                2,
+                1000,
+                `Read Tab '${targetTab}' (${chName})`,
+                15000
+              );
+              if (fallbackData.data.values && fallbackData.data.values.length > rows.length) {
+                rows = fallbackData.data.values;
+              }
+            }
+          }
+        } catch (e) {
+          // Keep original rows
+        }
+      }
       if (!rows || rows.length === 0) {
         const teamsRes = await getRegisteredTeamsCount(resolvedEntries[i]);
         let teamsMessage = "";
@@ -753,6 +1074,12 @@ export async function syncPrl(job: JoinerJob, runId: string) {
           teamsMessage = `.(Teams in responses sheet: ${teamsRes.count})`;
         }
         errors.push({ chName, error: `Sheet is blank or missing data${teamsMessage}` });
+        const rowData = [`CH ${chName}`, "", "", "", "", ""];
+        if (job.validationEnabled) {
+          rowData.push("");
+        }
+        allRows.push(rowData);
+        chStats.push({ chName, count: 0 });
         continue;
       }
 
@@ -768,8 +1095,8 @@ export async function syncPrl(job: JoinerJob, runId: string) {
 
           if (isAgeHeader(val)) {
             ageCol = c;
-          } else if ((val.includes("NAME") || val.includes("PLAYER") || val.includes("CAPTAIN") || val.includes("FULLNAME") || val.includes("FULL NAME")) && !val.includes("IGN") && !val.includes("GAME") && !val.includes("TEAM") && !val.includes("SQUAD") && !isAgeHeader(val)) {
-            nameCol = c;
+          } else if (isTeamNameHeader(val)) {
+            teamCol = c;
           } else if (val === "IGN" || val.includes("IGN") || val.includes("GAME NAME") || val.includes("IN GAME NAME") || val.includes("IN-GAME NAME")) {
             ignCol = c;
           } else if (val === "SERVER" || val.includes("SERVER") || val.includes("ZONE") || val === "ZONE ID" || val === "SERVER ID") {
@@ -777,16 +1104,13 @@ export async function syncPrl(job: JoinerJob, runId: string) {
           } else if (val === "UID" || val.includes("UID") || val.includes("USER ID") || val === "ID" || val.includes("GAME ID") || val.includes("ACCOUNT ID")) {
             uidCol = c;
           } else if (
-            val === "YOUR TEAM NAME" ||
-            val === "TEAM NAME" ||
-            val === "YOUR SQUAD NAME" ||
-            val === "SQUAD NAME" ||
-            val === "TEAM" ||
-            val.includes("TEAM NAME") ||
-            val.includes("TEAM") ||
-            val.includes("SQUAD")
+            (val.includes("NAME") || val.includes("PLAYER") || val.includes("CAPTAIN") || val.includes("FULLNAME") || val.includes("FULL NAME")) &&
+            !val.includes("IGN") &&
+            !val.includes("GAME") &&
+            !isAgeHeader(val) &&
+            !isTeamNameHeader(val)
           ) {
-            teamCol = c;
+            nameCol = c;
           }
         }
         if (nameCol !== -1 && serverCol !== -1 && uidCol !== -1) {
@@ -798,6 +1122,12 @@ export async function syncPrl(job: JoinerJob, runId: string) {
 
       if (headerRowIdx === -1 || nameCol === -1) {
         errors.push({ chName, error: "Could not find header row with NAME/SERVER/UID columns", type: "accessibility" });
+        const rowData = [`CH ${chName}`, "", "", "", "", ""];
+        if (job.validationEnabled) {
+          rowData.push("");
+        }
+        allRows.push(rowData);
+        chStats.push({ chName, count: 0 });
         continue;
       }
 
@@ -991,60 +1321,68 @@ export async function syncPrl(job: JoinerJob, runId: string) {
           errors.push({ chName, error: `Server length is unusually long for player ${name} (Server: ${server})` });
         }
 
-        let teamName = teamCol !== -1 ? String(row[teamCol] ?? "").trim() : "";
+        const rawTeam = teamCol !== -1 ? String(row[teamCol] ?? "").trim() : "";
+        let teamName = isAgreementValue(rawTeam) ? "" : rawTeam;
 
-        // If teamName or age is empty and a response sheet URL exists, fetch team/age map on-demand with caching
-        if ((!teamName || !age) && responseSheetUrl) {
-          const { teamNames: respTeamNames, playerTeamMap, playerAgeMap, teamSlotAgeMap } = await fetchChTeamMap(responseSheetUrl);
+        // If teamName is empty and a response sheet URL exists, fetch team map on-demand with caching
+        if (!teamName && responseSheetUrl) {
+          const { teamNames: respTeamNames, playerTeamMap } = await fetchChTeamMap(responseSheetUrl);
           
           const uidKey = uid ? uid.toLowerCase() : "";
+          const uidClean = uid ? uid.replace(/\D/g, "") : "";
           const ignKey = ign ? ign.toLowerCase() : "";
           const nameKey = name ? name.toLowerCase() : "";
           const ignClean = ignKey.replace(/[^a-z0-9]/g, "");
           const nameClean = nameKey.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
           const nameNoSpace = nameKey.replace(/[^a-z0-9]/g, "");
 
-          if (!teamName) {
-            if (uidKey && playerTeamMap.has(uidKey)) {
-              teamName = playerTeamMap.get(uidKey)!;
-            } else if (ignKey && playerTeamMap.has(ignKey)) {
-              teamName = playerTeamMap.get(ignKey)!;
-            } else if (ignClean && playerTeamMap.has(ignClean)) {
-              teamName = playerTeamMap.get(ignClean)!;
-            } else if (nameKey && playerTeamMap.has(nameKey)) {
-              teamName = playerTeamMap.get(nameKey)!;
-            } else if (nameClean && playerTeamMap.has(nameClean)) {
-              teamName = playerTeamMap.get(nameClean)!;
-            } else if (nameNoSpace && playerTeamMap.has(nameNoSpace)) {
-              teamName = playerTeamMap.get(nameNoSpace)!;
-            } else if (respTeamNames.length > 0) {
-              const teamIdx = Math.floor(validRowCount / gameModeMult);
-              if (teamIdx < respTeamNames.length) {
-                teamName = respTeamNames[teamIdx];
-              }
+          let matchedTeam = "";
+          if (uidKey && playerTeamMap.has(uidKey)) {
+            matchedTeam = playerTeamMap.get(uidKey)!;
+          } else if (uidClean && playerTeamMap.has(uidClean)) {
+            matchedTeam = playerTeamMap.get(uidClean)!;
+          } else if (ignKey && playerTeamMap.has(ignKey)) {
+            matchedTeam = playerTeamMap.get(ignKey)!;
+          } else if (ignClean && playerTeamMap.has(ignClean)) {
+            matchedTeam = playerTeamMap.get(ignClean)!;
+          } else if (nameKey && playerTeamMap.has(nameKey)) {
+            matchedTeam = playerTeamMap.get(nameKey)!;
+          } else if (nameClean && playerTeamMap.has(nameClean)) {
+            matchedTeam = playerTeamMap.get(nameClean)!;
+          } else if (nameNoSpace && playerTeamMap.has(nameNoSpace)) {
+            matchedTeam = playerTeamMap.get(nameNoSpace)!;
+          } else if (respTeamNames.length > 0) {
+            const teamIdx = Math.floor(validRowCount / gameModeMult);
+            if (teamIdx < respTeamNames.length) {
+              matchedTeam = respTeamNames[teamIdx];
             }
           }
+          if (matchedTeam && !isAgreementValue(matchedTeam)) {
+            teamName = matchedTeam;
+          }
+        }
 
-          if (!age) {
-            if (uidKey && playerAgeMap.has(uidKey)) {
-              age = playerAgeMap.get(uidKey)!;
-            } else if (ignKey && playerAgeMap.has(ignKey)) {
-              age = playerAgeMap.get(ignKey)!;
-            } else if (ignClean && playerAgeMap.has(ignClean)) {
-              age = playerAgeMap.get(ignClean)!;
-            } else if (nameKey && playerAgeMap.has(nameKey)) {
-              age = playerAgeMap.get(nameKey)!;
-            } else if (nameClean && playerAgeMap.has(nameClean)) {
-              age = playerAgeMap.get(nameClean)!;
-            } else if (nameNoSpace && playerAgeMap.has(nameNoSpace)) {
-              age = playerAgeMap.get(nameNoSpace)!;
-            } else if (teamName && teamSlotAgeMap) {
-              const slotInTeam = validRowCount % gameModeMult;
-              const slotAge = teamSlotAgeMap.get(`${teamName.toLowerCase()}#${slotInTeam}`);
-              if (slotAge) {
-                age = slotAge;
-              }
-            }
+        // Global map fallback across all CH response sheets for teamName
+        if (!teamName) {
+          const uidKey = uid ? uid.toLowerCase() : "";
+          const uidClean = uid ? uid.replace(/\D/g, "") : "";
+          const ignKey = ign ? ign.toLowerCase() : "";
+          const nameKey = name ? name.toLowerCase() : "";
+          const ignClean = ignKey.replace(/[^a-z0-9]/g, "");
+          const nameClean = nameKey.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
+          const nameNoSpace = nameKey.replace(/[^a-z0-9]/g, "");
+
+          let matchedGlobal = "";
+          if (uidKey && globalPlayerTeamMap.has(uidKey)) matchedGlobal = globalPlayerTeamMap.get(uidKey)!;
+          else if (uidClean && globalPlayerTeamMap.has(uidClean)) matchedGlobal = globalPlayerTeamMap.get(uidClean)!;
+          else if (ignKey && globalPlayerTeamMap.has(ignKey)) matchedGlobal = globalPlayerTeamMap.get(ignKey)!;
+          else if (ignClean && globalPlayerTeamMap.has(ignClean)) matchedGlobal = globalPlayerTeamMap.get(ignClean)!;
+          else if (nameKey && globalPlayerTeamMap.has(nameKey)) matchedGlobal = globalPlayerTeamMap.get(nameKey)!;
+          else if (nameClean && globalPlayerTeamMap.has(nameClean)) matchedGlobal = globalPlayerTeamMap.get(nameClean)!;
+          else if (nameNoSpace && globalPlayerTeamMap.has(nameNoSpace)) matchedGlobal = globalPlayerTeamMap.get(nameNoSpace)!;
+
+          if (matchedGlobal && !isAgreementValue(matchedGlobal)) {
+            teamName = matchedGlobal;
           }
         }
 
@@ -1055,6 +1393,13 @@ export async function syncPrl(job: JoinerJob, runId: string) {
             const prevCh = seenUids.get(uid)!;
             const sameServer = prevCh.server === server;
             const sameCh = prevCh.chName === chName;
+
+            // Synchronize teamName between occurrences so both have the team name (ensuring neither is an agreement value)
+            if (teamName && !isAgreementValue(teamName) && (!prevCh.baseDupRowData[6] || isAgreementValue(prevCh.baseDupRowData[6]))) {
+              prevCh.baseDupRowData[6] = teamName;
+            } else if ((!teamName || isAgreementValue(teamName)) && prevCh.baseDupRowData[6] && !isAgreementValue(prevCh.baseDupRowData[6])) {
+              teamName = prevCh.baseDupRowData[6];
+            }
 
             let errorMsg = "";
             let dupWith = "";
@@ -1072,13 +1417,13 @@ export async function syncPrl(job: JoinerJob, runId: string) {
               }
             } else {
               if (sameCh) {
-                errorMsg = `Fake duplicate MLBB ID found (different server entered): ${name || "Unknown"} (UID: ${uid}, Server: ${server}) was already registered earlier in CH ${chName} (with Server: ${prevCh.server})`;
-                dupWith = `Same CH (${chName}, Real Server: ${prevCh.server})`;
-                dupType = "Fake Duplicate (Altered Server)";
+                errorMsg = `Duplicate MLBB ID found (different server entered): ${name || "Unknown"} (UID: ${uid}, Server: ${server}) was already registered earlier in CH ${chName} (with Server: ${prevCh.server})`;
+                dupWith = `Same CH (${chName}, Original Server: ${prevCh.server})`;
+                dupType = "Cross-Server Duplicate (Altered Server)";
               } else {
-                errorMsg = `Fake duplicate MLBB ID found (different server entered): ${name || "Unknown"} (UID: ${uid}, Server: ${server}) was registered in CH ${chName}, but originally registered with Server ${prevCh.server} in CH ${prevCh.chName}`;
-                dupWith = `Duplicated with ${prevCh.chName} (Real Server: ${prevCh.server})`;
-                dupType = "Fake Duplicate (Altered Server)";
+                errorMsg = `Duplicate MLBB ID found (different server entered): ${name || "Unknown"} (UID: ${uid}, Server: ${server}) was registered in CH ${chName}, but originally registered with Server ${prevCh.server} in CH ${prevCh.chName}`;
+                dupWith = `Duplicated with ${prevCh.chName} (Original Server: ${prevCh.server})`;
+                dupType = "Cross-Server Duplicate (Altered Server)";
               }
             }
 
@@ -1092,7 +1437,7 @@ export async function syncPrl(job: JoinerJob, runId: string) {
             // Push original occurrence to duplicateRowsList if not added yet
             if (!prevCh.addedToDupSheet) {
               const origDupWith = sameCh ? `Same CH (${chName})` : `Duplicated with ${chName}`;
-              const origDupType = sameServer ? (sameCh ? "Internal Duplicate" : "Cross-Host Duplicate") : "Original Entry (Copied by " + chName + ")";
+              const origDupType = sameServer ? (sameCh ? "Internal Duplicate" : "Cross-Host Duplicate") : `Original Entry (Duplicate in ${chName})`;
               duplicateRowsList.push({
                 rowData: [...prevCh.baseDupRowData, origDupWith, origDupType],
                 groupIdx,
@@ -1138,7 +1483,17 @@ export async function syncPrl(job: JoinerJob, runId: string) {
         validRowCount++;
       }
 
+      if (!chHeaderAdded) {
+        const rowData = [`CH ${chName}`, "", "", "", "", ""];
+        if (job.validationEnabled) {
+          rowData.push("");
+        }
+        allRows.push(rowData);
+        chHeaderAdded = true;
+      }
+
       chStats.push({ chName, count: validRowCount });
+      console.log(`[PRL Sheet] ✅ CH [${i + 1}/${resolvedEntries.length}] ${chName}: Processed ${validRowCount} valid players (Response Sheet: ${responseSheetUrl ? "FOUND" : "NONE"})`);
 
       // Determine Validation Thresholds based on mode
       const isOnsite = gameModeStr === "Onsite 5v5";
@@ -1159,6 +1514,7 @@ export async function syncPrl(job: JoinerJob, runId: string) {
 
     } catch (error: any) {
       const msg = error?.message || String(error);
+      console.log(`[PRL Sheet] ❌ CH [${i + 1}/${resolvedEntries.length}] ${chName}: Error reading sheet (${msg})`);
       const teamsRes = await getRegisteredTeamsCount(resolvedEntries[i]);
       let teamsMessage = "";
       if (teamsRes.count !== "0" || teamsRes.source === "error") {
@@ -1170,6 +1526,13 @@ export async function syncPrl(job: JoinerJob, runId: string) {
         errors.push({ chName, error: `Sheet not found (404). The spreadsheet may have been deleted.${teamsMessage}` });
       } else {
         errors.push({ chName, error: `Error reading sheet: ${msg}${teamsMessage}` });
+      }
+      if (!chHeaderAdded) {
+        const rowData = [`CH ${chName}`, "", "", "", "", ""];
+        if (job.validationEnabled) {
+          rowData.push("");
+        }
+        allRows.push(rowData);
       }
       if (!chStats.some((s) => s.chName === chName)) {
         chStats.push({ chName, count: 0 });

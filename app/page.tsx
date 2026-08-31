@@ -2,11 +2,18 @@ import { auth, signIn } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 
-export default async function HomePage() {
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ reason?: string }>;
+}) {
+  const params = searchParams ? await searchParams : {};
   const session = await auth();
   if (session?.user) {
     redirect("/dashboard");
   }
+
+  const isInactiveLogout = params?.reason === "inactivity";
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-between bg-slate-900 text-slate-50 overflow-hidden relative selection:bg-indigo-500/30 font-sans">
@@ -21,6 +28,14 @@ export default async function HomePage() {
 
       <div className="flex-1 flex flex-col items-center justify-center w-full max-w-5xl mx-auto z-10 py-20 px-6">
         <div className="text-center space-y-8 max-w-3xl mx-auto animate-fade-in">
+          {/* Inactivity Notice Banner */}
+          {isInactiveLogout && (
+            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-semibold flex items-center justify-center gap-3 animate-in fade-in slide-in-from-top-3 duration-300 shadow-xl shadow-amber-500/5">
+              <span className="text-base">⏱️</span>
+              <span>You were automatically signed out after 30 minutes of inactivity to keep your Google Sheet permissions secure.</span>
+            </div>
+          )}
+
           {/* Logo/Icon */}
           <div className="flex justify-center mb-6">
             <div className="relative group cursor-default">

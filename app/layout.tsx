@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { InactivityTracker } from "@/components/InactivityTracker";
 
 export const metadata: Metadata = {
   title: "Dias & PRL Auto Joiner",
@@ -21,6 +22,7 @@ export default function RootLayout({
       </head>
       <body className="antialiased">
         {children}
+        <InactivityTracker />
       </body>
     </html>
   );

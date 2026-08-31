@@ -58,12 +58,40 @@ async function readChEntriesFromReportingSheet(
 
   console.log(`[ReportingSheet] Scanning CHs starting from header row ${headerRowIdx} (CH Col: ${nicknameCol}, Link Col: ${linkCol}, ResponseSheet Col: ${responseSheetCol}, RegTeams Col: ${registeredTeamsCol})`);
 
+  // Extract entries starting from the row after headers
   for (let i = headerRowIdx + 1; i < rows.length; i++) {
     const row = rows[i];
     const chNickname = String(row[nicknameCol] ?? "").trim();
-    const link = String(row[linkCol] ?? "").trim();
 
+    // If nickname column is empty, this is an area separator row or spacing row -> skip cleanly!
     if (!chNickname) continue;
+
+    let responseSheetUrl = responseSheetCol !== -1 ? String(row[responseSheetCol] ?? "").trim() : "";
+    let link = String(row[linkCol] ?? "").trim();
+
+    // If link is still empty or not a valid URL, search row for any other URL that is NOT responseSheetUrl
+    if (!link || (!link.startsWith("http") && !link.startsWith("www"))) {
+      for (let c = 0; c < row.length; c++) {
+        if (c === nicknameCol || c === responseSheetCol) continue;
+        const cellVal = String(row[c] ?? "").trim();
+        if ((cellVal.startsWith("http") || cellVal.startsWith("www") || cellVal.includes("docs.google.com") || cellVal.includes("bit.ly") || cellVal.includes("tinyurl")) && cellVal !== responseSheetUrl) {
+          link = cellVal;
+          break;
+        }
+      }
+    }
+
+    // If responseSheetUrl was not found yet, scan row for any remaining URL cell that is NOT link
+    if (!responseSheetUrl) {
+      for (let c = 0; c < row.length; c++) {
+        if (c === nicknameCol || c === linkCol) continue;
+        const cellVal = String(row[c] ?? "").trim();
+        if ((cellVal.startsWith("http") || cellVal.startsWith("www") || cellVal.includes("docs.google.com") || cellVal.includes("bit.ly") || cellVal.includes("tinyurl")) && cellVal !== link) {
+          responseSheetUrl = cellVal;
+          break;
+        }
+      }
+    }
 
     // Check if there is a link
     const isNoLink = !link;
@@ -74,6 +102,8 @@ async function readChEntriesFromReportingSheet(
       link.toUpperCase() === "EVENT" ||
       (!link.startsWith("http") && !link.startsWith("www"));
 
+    const registeredTeams = registeredTeamsCol !== -1 ? String(row[registeredTeamsCol] ?? "").trim() : "";
+
     if (isInvalidLink) {
       const errorDetail = isNoLink
         ? "No link provided (Did not follow the rules)"
@@ -83,22 +113,14 @@ async function readChEntriesFromReportingSheet(
         error: errorDetail,
         type: "rule_violation"
       });
+      entries.push({ 
+        chName: chNickname, 
+        url: "",
+        responseSheetUrl,
+        registeredTeams
+      });
       continue;
     }
-
-    let responseSheetUrl = responseSheetCol !== -1 ? String(row[responseSheetCol] ?? "").trim() : "";
-    if (!responseSheetUrl || (!responseSheetUrl.startsWith("http") && !responseSheetUrl.startsWith("www"))) {
-      for (let c = 0; c < row.length; c++) {
-        if (c === linkCol || c === nicknameCol) continue;
-        const cellVal = String(row[c] ?? "").trim();
-        if ((cellVal.startsWith("http") || cellVal.startsWith("www") || cellVal.includes("docs.google.com")) && cellVal !== link) {
-          responseSheetUrl = cellVal;
-          break;
-        }
-      }
-    }
-
-    const registeredTeams = registeredTeamsCol !== -1 ? String(row[registeredTeamsCol] ?? "").trim() : "";
 
     entries.push({ 
       chName: chNickname, 
@@ -108,7 +130,8 @@ async function readChEntriesFromReportingSheet(
     });
   }
 
-  console.log(`[ReportingSheet] Found ${entries.length} valid CH entries with links dynamically`);
+  console.log(`[ReportingSheet] Scanning CHs in "${sheetName}": Found ${entries.length} valid CH entries`);
+  console.log(`[ReportingSheet] List of CHs: ${entries.map(e => e.chName).join(", ")}`);
 
   return { entries, errors };
 }
@@ -508,25 +531,44 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
 
   for (let i = 0; i < chEntries.length; i += URL_CONCURRENCY) {
     const batch = chEntries.slice(i, i + URL_CONCURRENCY);
-    await Promise.all(
+    const batchResults = await Promise.all(
       batch.map(async (ch) => {
         const result = await resolveUrl(ch.url);
         resolvedCount++;
         const pct = 5 + Math.floor((resolvedCount / totalCh) * 15);
         await updateProgress(pct, `Resolving URLs: ${resolvedCount}/${totalCh}`);
-
-        if ("error" in result) {
-          errors.push({ chName: ch.chName, error: `URL Resolution Failed: ${result.error}` });
-        } else {
-          resolvedEntries.push({
-            chName: ch.chName,
-            spreadsheetId: (result as ResolveResult).spreadsheetId,
-            responseSheetUrl: ch.responseSheetUrl,
-            registeredTeams: ch.registeredTeams,
-          });
-        }
+        return { ch, result };
       })
     );
+
+    for (const item of batchResults) {
+      if (!item.ch.url) {
+        console.log(`[URL Resolver] ⚠️  CH ${item.ch.chName}: NO LINK (Will write CH name to output with 0 players)`);
+        resolvedEntries.push({
+          chName: item.ch.chName,
+          spreadsheetId: "",
+          responseSheetUrl: item.ch.responseSheetUrl,
+          registeredTeams: item.ch.registeredTeams,
+        });
+      } else if ("error" in item.result) {
+        console.log(`[URL Resolver] ❌ CH ${item.ch.chName}: FAILED "${item.ch.url}" (${item.result.error})`);
+        errors.push({ chName: item.ch.chName, error: `URL Resolution Failed: ${item.result.error}` });
+        resolvedEntries.push({
+          chName: item.ch.chName,
+          spreadsheetId: "",
+          responseSheetUrl: item.ch.responseSheetUrl,
+          registeredTeams: item.ch.registeredTeams,
+        });
+      } else {
+        console.log(`[URL Resolver] ✅ CH ${item.ch.chName}: RESOLVED -> Spreadsheet ID: ${item.result.spreadsheetId}`);
+        resolvedEntries.push({
+          chName: item.ch.chName,
+          spreadsheetId: (item.result as ResolveResult).spreadsheetId,
+          responseSheetUrl: item.ch.responseSheetUrl,
+          registeredTeams: item.ch.registeredTeams,
+        });
+      }
+    }
   }
 
   const getRegisteredTeamsCount = async (chEntry: any) => {
@@ -543,10 +585,10 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
               spreadsheetId: resSpreadsheetId,
               range: "A1:Z100",
             }),
-            1,
-            500,
-            "Teams Count",
-            3000
+            2,
+            1000,
+            `Teams Count (${chEntry?.chName || "CH"})`,
+            15000
           );
           const resRows = (resSheet as any)?.data?.values || [];
           if (resRows.length > 0) {
@@ -618,18 +660,76 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
       return { rowsWritten: 0, success: false, errors };
     }
 
+    let chHeaderAdded = false;
+    let playerCount = 0;
+
+    if (!spreadsheetId) {
+      // CH had no link or invalid URL: paste CH name with empty player cells
+      console.log(`[Diamonds Sheet] ⚠️  CH [${i + 1}/${resolvedEntries.length}] ${chName}: NO LINK (Added header row with 0 players)`);
+      const rowData = [chName, "", "", "", "", "", ""];
+      if (job.validationEnabled) {
+        rowData.push("");
+      }
+      allRows.push(rowData);
+      chStats.push({ chName, count: 0 });
+      continue;
+    }
+
     try {
-      const sheetData = await withRetry(
+      // 1. Direct fast read of default range A1:Z (no metadata overhead)
+      let sheetData = await withRetry(
         () => sheets.spreadsheets.values.get({
           spreadsheetId,
           range: "A1:Z",
         }),
-        3,
-        1500,
-        `Read CH Sheet (${chName})`
+        2,
+        1000,
+        `Read CH Sheet (${chName})`,
+        15000
       );
 
-      const rows = sheetData.data.values;
+      let rows = sheetData.data.values || [];
+
+      // 2. ONLY IF the default tab returned < 3 rows (e.g. hidden tabs or multi-tab), inspect tabs as a fallback
+      if (rows.length < 3) {
+        try {
+          const meta = await withRetry(
+            () => sheets.spreadsheets.get({ spreadsheetId }),
+            1,
+            500,
+            `Get Tabs Fallback (${chName})`,
+            8000
+          );
+          const sheetList = (meta as any)?.data?.sheets || [];
+          const visibleTabs = sheetList.filter((s: any) => !s.properties?.hidden);
+          const tabsToConsider = visibleTabs.length > 0 ? visibleTabs : sheetList;
+
+          if (tabsToConsider.length > 1) {
+            const validTabs = tabsToConsider.filter((s: any) => {
+              const title = String(s.properties?.title || "").toUpperCase().trim();
+              return !title.includes("TEMPLATE") && !title.includes("MM/DD/YY") && !title.includes("GUIDE") && !title.includes("INSTRUCTION");
+            });
+            const targetTab = (validTabs.length > 0 ? validTabs[0] : tabsToConsider[0])?.properties?.title || "";
+            if (targetTab) {
+              const fallbackData = await withRetry(
+                () => sheets.spreadsheets.values.get({
+                  spreadsheetId,
+                  range: `'${targetTab.replace(/'/g, "''")}'!A1:Z`,
+                }),
+                2,
+                1000,
+                `Read Tab '${targetTab}' (${chName})`,
+                15000
+              );
+              if (fallbackData.data.values && fallbackData.data.values.length > rows.length) {
+                rows = fallbackData.data.values;
+              }
+            }
+          }
+        } catch (e) {
+          // Keep original rows
+        }
+      }
       if (!rows || rows.length === 0) {
         const teamsRes = await getRegisteredTeamsCount(resolvedEntries[i]);
         let teamsMessage = "";
@@ -637,6 +737,12 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
           teamsMessage = `.(Teams in responses sheet: ${teamsRes.count})`;
         }
         errors.push({ chName, error: `Sheet is blank/empty.${teamsMessage}` });
+        const rowData = [chName, "", "", "", "", "", ""];
+        if (job.validationEnabled) {
+          rowData.push("");
+        }
+        allRows.push(rowData);
+        chStats.push({ chName, count: 0 });
         continue;
       }
 
@@ -674,6 +780,12 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
 
       if (headerRowIdx === -1 || nameCol === -1) {
         errors.push({ chName, error: "Could not find header row with NAME/SERVER/UID columns", type: "accessibility" });
+        const rowData = [chName, "", "", "", "", "", ""];
+        if (job.validationEnabled) {
+          rowData.push("");
+        }
+        allRows.push(rowData);
+        chStats.push({ chName, count: 0 });
         continue;
       }
 
@@ -825,13 +937,13 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
               }
             } else {
               if (sameCh) {
-                errorMsg = `Fake duplicate MLBB ID found (different server entered): ${name || "Unknown"} (UID: ${uid}, Server: ${server}) was already registered earlier in CH ${chName} (with Server: ${prev.server})`;
-                dupWith = `Same CH (${chName}, Real Server: ${prev.server})`;
-                dupType = "Fake Duplicate (Altered Server)";
+                errorMsg = `Duplicate MLBB ID found (different server entered): ${name || "Unknown"} (UID: ${uid}, Server: ${server}) was already registered earlier in CH ${chName} (with Server: ${prev.server})`;
+                dupWith = `Same CH (${chName}, Original Server: ${prev.server})`;
+                dupType = "Cross-Server Duplicate (Altered Server)";
               } else {
-                errorMsg = `Fake duplicate MLBB ID found (copied ID across CHs): ${name || "Unknown"} (UID: ${uid}, Server: ${server}) was already registered in CH ${prev.chName} (with Server: ${prev.server})`;
-                dupWith = `Copied from ${prev.chName} (Real Server: ${prev.server})`;
-                dupType = "Fake Duplicate (Altered Server)";
+                errorMsg = `Duplicate MLBB ID found (different server entered): ${name || "Unknown"} (UID: ${uid}, Server: ${server}) was already registered in CH ${prev.chName} (with Server: ${prev.server})`;
+                dupWith = `Duplicated with ${prev.chName} (Original Server: ${prev.server})`;
+                dupType = "Cross-Server Duplicate (Altered Server)";
               }
             }
 
@@ -845,7 +957,7 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
             // Push original occurrence to duplicateRowsList if not added yet
             if (!prev.addedToDupSheet) {
               const origDupWith = sameCh ? `Same CH (${chName})` : `Duplicated with ${chName}`;
-              const origDupType = sameServer ? (sameCh ? "Internal Duplicate" : "Cross-Host Duplicate") : "Original Entry (Copied by " + chName + ")";
+              const origDupType = sameServer ? (sameCh ? "Internal Duplicate" : "Cross-Host Duplicate") : `Original Entry (Duplicate in ${chName})`;
               duplicateRowsList.push({
                 rowData: [...prev.baseDupRowData, origDupWith, origDupType],
                 groupIdx,
@@ -888,7 +1000,17 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
         chHeaderAdded = true;
       }
       
+      if (!chHeaderAdded) {
+        const rowData = [chName, "", "", "", "", "", ""];
+        if (job.validationEnabled) {
+          rowData.push("");
+        }
+        allRows.push(rowData);
+        chHeaderAdded = true;
+      }
+
       chStats.push({ chName, count: playerCount });
+      console.log(`[Diamonds Sheet] ✅ CH [${i + 1}/${resolvedEntries.length}] ${chName}: Processed ${playerCount} valid players`);
 
       if (playerCount === 0) {
         const teamsRes = await getRegisteredTeamsCount(resolvedEntries[i]);
@@ -900,6 +1022,7 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
       }
     } catch (error: any) {
       const msg = error?.message || String(error);
+      console.log(`[Diamonds Sheet] ❌ CH [${i + 1}/${resolvedEntries.length}] ${chName}: Error reading sheet (${msg})`);
       const teamsRes = await getRegisteredTeamsCount(resolvedEntries[i]);
       let teamsMessage = "";
       if (teamsRes.count !== "0" || teamsRes.source === "error") {
@@ -911,6 +1034,13 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
         errors.push({ chName, error: `Sheet not found (404). The spreadsheet may have been deleted.${teamsMessage}` });
       } else {
         errors.push({ chName, error: `Error reading sheet: ${msg}${teamsMessage}` });
+      }
+      if (!chHeaderAdded) {
+        const rowData = [chName, "", "", "", "", "", ""];
+        if (job.validationEnabled) {
+          rowData.push("");
+        }
+        allRows.push(rowData);
       }
       if (!chStats.some((s) => s.chName === chName)) {
         chStats.push({ chName, count: 0 });

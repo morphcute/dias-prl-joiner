@@ -280,39 +280,173 @@ export default function Dashboard() {
   };
 
   // Categorize errors
-  const getErrorType = (err: ChError) => {
-    const msg = (err.error || "").toLowerCase();
+  const getErrorType = (
+    err: ChError
+  ): "duplicate" | "dissolved" | "accessibility" | "rule_violation" | "validation_fixed" | "validation_error" => {
     const type = (err.type || "").toLowerCase();
+    const msg = (err.error || "").toLowerCase();
+
     if (type === "rule_violation" || msg.includes("rules") || msg.includes("no link")) return "rule_violation";
-    if (type === "accessibility" || msg.includes("cannot access") || msg.includes("permission") || msg.includes("dissolved")) return "accessibility";
-    if (type === "duplicate" || msg.includes("duplicate")) return "duplicate";
-    if (type === "validation_fixed" || msg.includes("fixed") || msg.includes("validation")) return "validation_fixed";
-    return "general";
+    if (type === "accessibility") return "accessibility";
+    if (type === "validation_fixed") return "validation_fixed";
+    if (type === "validation_error") return "validation_error";
+
+    if (msg.includes("duplicate")) return "duplicate";
+    if (msg.includes("dissolved") || msg.includes("empty tournament") || msg.includes("no actual players")) return "dissolved";
+    if (
+      msg.includes("403") ||
+      msg.includes("404") ||
+      msg.includes("permission") ||
+      msg.includes("not found") ||
+      msg.includes("error reading sheet") ||
+      msg.includes("cannot access") ||
+      msg.includes("timeout") ||
+      msg.includes("blank or missing") ||
+      msg.includes("url resolution failed") ||
+      msg.includes("could not find header row")
+    ) {
+      return "accessibility";
+    }
+    if (
+      msg.includes("auto-fixed") ||
+      msg.includes("mixed server/uid") ||
+      msg.includes("swapped") ||
+      msg.includes("auto-corrected") ||
+      msg.includes("interchanged") ||
+      msg.includes("column mapping")
+    ) {
+      return "validation_fixed";
+    }
+    return "validation_error";
   };
 
   // Parse duplicate string
   const parseDuplicateError = (err: ChError) => {
     const msg = err.error || "";
-    const isFaked = msg.includes("Faked Server ID");
-    const nameMatch = msg.match(/Player "([^"]+)"/);
-    const uidMatch = msg.match(/\(UID: (\d+)/);
-    const serverMatch = msg.match(/Server: (\d+)/);
-    const prevServerMatch = msg.match(/Real Server: (\d+)/);
-    const prevChMatch = msg.match(/in (.*?) \(row/);
-    const currChMatch = msg.match(/already in (.*?)\./) || msg.match(/Duplicate in (.*?)\./);
+
+    // 1. Same Server Normal Duplicate
+    const sameServerRegex =
+      /(?:Duplicate player entry found|Duplicate winner found):\s*(.*?)\s*\(Server:\s*([^,)]*),\s*UID:\s*([^)]*)\)\s*was\s*already\s*registered\s*(?:earlier\s*)?in\s*CH\s*(.*)/i;
+    const match1 = msg.match(sameServerRegex);
+    if (match1) {
+      return {
+        name: match1[1].trim(),
+        server: match1[2].trim(),
+        uid: match1[3].trim(),
+        prevCh: match1[4].trim(),
+        currCh: err.chName.trim(),
+        isFakedServer: false,
+        prevServer: null as string | null,
+      };
+    }
+
+    // 2. Duplicate with altered server - format A:
+    const diffServerRegex1 =
+      /(?:Duplicate|Fake duplicate) MLBB ID found.*:\s*(.*?)\s*\(UID:\s*([^,)]*),\s*Server:\s*([^)]*)\)\s*was\s*registered\s*in\s*CH\s*(.*?),\s*but\s*originally\s*registered\s*with\s*Server\s*([^ ]*)\s*in\s*CH\s*(.*)/i;
+    const match2 = msg.match(diffServerRegex1);
+    if (match2) {
+      return {
+        name: match2[1].trim(),
+        uid: match2[2].trim(),
+        server: match2[3].trim(),
+        currCh: match2[4].trim() || err.chName.trim(),
+        prevServer: match2[5].trim(),
+        prevCh: match2[6].trim(),
+        isFakedServer: true,
+      };
+    }
+
+    // 3. Duplicate with altered server - format B:
+    const diffServerRegex2 =
+      /(?:Duplicate|Fake duplicate) MLBB ID found.*:\s*(.*?)\s*\(UID:\s*([^,)]*),\s*Server:\s*([^)]*)\)\s*was\s*already\s*registered\s*(?:earlier\s*)?in\s*CH\s*(.*?)(?:\s*\(with Server:\s*([^)]*)\))?$/i;
+    const match3 = msg.match(diffServerRegex2);
+    if (match3) {
+      return {
+        name: match3[1].trim(),
+        uid: match3[2].trim(),
+        server: match3[3].trim(),
+        prevCh: match3[4].trim(),
+        prevServer: match3[5] ? match3[5].trim() : null,
+        currCh: err.chName.trim(),
+        isFakedServer: true,
+      };
+    }
+
+    // 4. Legacy / Fallback matching
+    const nameMatch = msg.match(/Player "([^"]+)"/) || msg.match(/player ([^(:]+)/i);
+    const uidMatch = msg.match(/UID:?\s*(\d+)/i);
+    const serverMatch = msg.match(/Server:?\s*(\d+)/i);
+    const prevServerMatch = msg.match(/Real Server:?\s*(\d+)/i);
+    const prevChMatch = msg.match(/in (.*?) \(row/) || msg.match(/in CH (.*)/i);
+    const isFaked =
+      msg.toLowerCase().includes("faked") ||
+      msg.toLowerCase().includes("fake") ||
+      msg.toLowerCase().includes("different server");
 
     if (nameMatch && uidMatch) {
       return {
-        name: nameMatch[1],
-        uid: uidMatch[1],
-        server: serverMatch ? serverMatch[1] : "N/A",
-        prevServer: prevServerMatch ? prevServerMatch[1] : null,
+        name: nameMatch[1].trim(),
+        uid: uidMatch[1].trim(),
+        server: serverMatch ? serverMatch[1].trim() : "N/A",
+        prevServer: prevServerMatch ? prevServerMatch[1].trim() : null,
         prevCh: prevChMatch ? prevChMatch[1].trim() : "Unknown CH",
-        currCh: currChMatch ? currChMatch[1].trim() : err.chName,
+        currCh: err.chName.trim(),
         isFakedServer: isFaked,
       };
     }
+
     return null;
+  };
+
+  // Helper to parse dissolved tournament errors
+  const parseDissolvedError = (errStr: string) => {
+    const match =
+      errStr.match(
+        /only (\d+) valid players found.*?(?:Mode:\s*([^,]+))?,\s*(?:Target:\s*(\d+)(?:\s*players(?:\s*\[\d+\s*teams\])?)?)?,\s*(?:Minimum allowed:\s*(\d+))?(?:\.\s*\(Teams in responses sheet:\s*([^)]*)\))?/i
+      ) ||
+      errStr.match(
+        /only (\d+) valid players.*Mode:\s*([^,]+),\s*Target:\s*(\d+).*?Minimum allowed:\s*(\d+)(?:\.\s*\(Teams in responses sheet:\s*([^)]*)\))?/i
+      );
+    if (match) {
+      return {
+        actual: match[1],
+        mode: match[2] || "5v5",
+        target: match[3] || "50",
+        min: match[4] || "46",
+        teams: match[5] || null,
+      };
+    }
+    return null;
+  };
+
+  // Format date helper
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return "N/A";
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "N/A";
+    const months = [
+      "January",
+      "February",
+      "March",
+      "April",
+      "May",
+      "June",
+      "July",
+      "August",
+      "September",
+      "October",
+      "November",
+      "December",
+    ];
+    const month = months[d.getMonth()];
+    const day = d.getDate();
+    const year = d.getFullYear();
+    let hours = d.getHours();
+    const minutes = String(d.getMinutes()).padStart(2, "0");
+    const ampm = hours >= 12 ? "PM" : "AM";
+    hours = hours % 12;
+    hours = hours ? hours : 12;
+    return `${month} ${day}, ${year} • ${hours}:${minutes} ${ampm}`;
   };
 
   // Copy Summary Report to Clipboard
@@ -320,32 +454,318 @@ export default function Dashboard() {
     if (!selectedJob) return;
     const latestRun = selectedJob.runs?.[0];
     const totalRows = latestRun?.rowsWritten || 0;
-    const criticals = viewErrors.filter((e) => ["accessibility", "dissolved", "rule_violation"].includes(getErrorType(e)));
+    const totalPlayers = viewStats.reduce((sum, s) => sum + s.count, 0) || totalRows;
     const duplicates = viewErrors.filter((e) => getErrorType(e) === "duplicate");
+    const dissolved = viewErrors.filter((e) => getErrorType(e) === "dissolved");
+    const accessibility = viewErrors.filter((e) => ["accessibility", "rule_violation"].includes(getErrorType(e)));
+    const autoFixes = viewErrors.filter((e) => getErrorType(e) === "validation_fixed");
+    const validationErrors = viewErrors.filter((e) => getErrorType(e) === "validation_error");
 
-    let text = `📊 SYNC REPORT SUMMARY: ${selectedJob.name}\n`;
-    text += `====================================\n`;
-    text += `Status: ${latestRun?.status || "N/A"}\n`;
-    text += `Total Extracted Rows: ${totalRows}\n`;
-    text += `Critical Issues & Rule Faults: ${criticals.length}\n`;
-    text += `Duplicate Entries: ${duplicates.length}\n\n`;
+    const autoFixesGrouped: Record<string, string[]> = {};
+    autoFixes.forEach((f) => {
+      const ch = f.chName;
+      if (!autoFixesGrouped[ch]) {
+        autoFixesGrouped[ch] = [];
+      }
 
-    if (viewStats.length > 0) {
-      text += `👥 CH HOST BREAKDOWN:\n`;
-      viewStats.forEach((s) => {
-        text += `- ${s.chName}: ${s.count} players\n`;
+      const mixedMatch = f.error.match(/Mixed Server\/UID extracted for player (.*?) \(Server: (.*?), UID: (.*?)\)/i);
+      if (mixedMatch) {
+        autoFixesGrouped[ch].push(
+          ` • Mixed Server/UID extracted\n   Player : ${mixedMatch[1].trim()}\n   Server : ${mixedMatch[2].trim()}\n   UID    : ${mixedMatch[3].trim()}`
+        );
+      } else if (f.error.toLowerCase().includes("column mapping")) {
+        autoFixesGrouped[ch].push(` • Column mapping automatically corrected\n   (Misaligned headers detected)`);
+      } else if (f.error.toLowerCase().includes("interchanged") || f.error.toLowerCase().includes("swapped")) {
+        const playerMatch = f.error.match(/player (.*)/i);
+        const namePart = playerMatch ? playerMatch[1].trim() : "Unknown";
+        autoFixesGrouped[ch].push(` • Swapped Server/UID columns automatically corrected\n   Player : ${namePart}`);
+      } else {
+        autoFixesGrouped[ch].push(` • ${f.error}`);
+      }
+    });
+
+    const validationGrouped: Record<string, string[]> = {};
+    validationErrors.forEach((v) => {
+      const ch = v.chName;
+      if (!validationGrouped[ch]) {
+        validationGrouped[ch] = [];
+      }
+
+      const textServerMatch = v.error.match(/Added text instead of numerical Server for player (.*?) \(Input: '(.*?)'\)/i);
+      const ignServerMatch = v.error.match(/Added Players IGN instead of Server for player (.*)/i);
+      const missingMatch = v.error.match(/Missing Server or UID for player (.*?) \(Server: '(.*?)',\s*UID: '(.*?)'\)/i);
+      const shortUidMatch = v.error.match(/Missing UID because the CH type (.*?) numbers only for player (.*)/i);
+      const spaceUidMatch = v.error.match(/UID contains spaces for player (.*?) \(Input: '(.*?)'\)/i);
+      const spaceServerMatch = v.error.match(/Server contains spaces for player (.*?) \(Input: '(.*?)'\)/i);
+      const negativeMatch = v.error.match(/Negative sign detected for player (.*?) \(Raw Server: (.*?), Raw UID: (.*?)\)/i);
+      const serverLengthMatch = v.error.match(/Server length is unusually long for player (.*?) \(Server: (.*?)\)/i);
+      const serverInUidMatch = v.error.match(/Server entered in UID column for player (.*?) \(Server: (.*?), UID: (.*?)\)/i);
+
+      if (textServerMatch) {
+        validationGrouped[ch].push(
+          ` • Player : ${textServerMatch[1].trim()}\n   Error  : Server must be numeric\n   Input  : "${textServerMatch[2].trim()}"`
+        );
+      } else if (ignServerMatch) {
+        validationGrouped[ch].push(` • Player : ${ignServerMatch[1].trim()}\n   Error  : Player IGN entered instead of Server`);
+      } else if (missingMatch) {
+        validationGrouped[ch].push(
+          ` • Player : ${missingMatch[1].trim()}\n   Error  : Missing Server or UID\n   Input  : Server: '${missingMatch[2]}', UID: '${missingMatch[3]}'`
+        );
+      } else if (shortUidMatch) {
+        validationGrouped[ch].push(` • Player : ${shortUidMatch[2].trim()}\n   Error  : Missing UID (only typed server/short ID)`);
+      } else if (spaceUidMatch) {
+        validationGrouped[ch].push(` • Player : ${spaceUidMatch[1].trim()}\n   Error  : UID contains spaces\n   Input  : "${spaceUidMatch[2]}"`);
+      } else if (spaceServerMatch) {
+        validationGrouped[ch].push(` • Player : ${spaceServerMatch[1].trim()}\n   Error  : Server contains spaces\n   Input  : "${spaceServerMatch[2]}"`);
+      } else if (negativeMatch) {
+        validationGrouped[ch].push(
+          ` • Player : ${negativeMatch[1].trim()}\n   Error  : Negative sign detected in IDs\n   Input  : Raw Server: ${negativeMatch[2]}, Raw UID: ${negativeMatch[3]}`
+        );
+      } else if (serverLengthMatch) {
+        validationGrouped[ch].push(
+          ` • Player : ${serverLengthMatch[1].trim()}\n   Error  : Server length unusually long\n   Input  : "${serverLengthMatch[2]}"`
+        );
+      } else if (serverInUidMatch) {
+        validationGrouped[ch].push(
+          ` • Player : ${serverInUidMatch[1].trim()}\n   Error  : Server entered in UID column\n   Input  : Server: ${serverInUidMatch[2]}, UID: ${serverInUidMatch[3]}`
+        );
+      } else {
+        validationGrouped[ch].push(` • ${v.error}`);
+      }
+    });
+
+    let report = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    report += `📊 ${selectedJob.name.toUpperCase()}\n`;
+    report += `OPERATION SUMMARY REPORT\n`;
+    report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    report += `🆔 Run ID     : ${latestRun?.id || "N/A"}\n`;
+    report += `⚙️ Pipeline   : ${selectedJob.type === "diamonds" ? "Diamond Rewards" : "PRL Pipeline"}\n`;
+    report += `📅 Date       : ${formatDate(latestRun?.startedAt || (latestRun as any)?.createdAt)}\n`;
+    report += `✅ Status     : ${(latestRun?.status || "SUCCESS").toUpperCase()}\n`;
+    report += `📝 Rows Saved : ${Number(totalRows).toLocaleString()}\n\n`;
+
+    report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    report += `📈 OVERALL METRICS\n`;
+    report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    report += `👥 Compiled CHs               : ${viewStats.length}\n`;
+    report += `🏆 Active Players/Winners     : ${totalPlayers}\n`;
+    report += `❌ Dissolved Tournaments       : ${dissolved.length}\n`;
+    if (accessibility.length > 0) {
+      report += `🔓 Accessibility Faults       : ${accessibility.length}\n`;
+    }
+    report += `🔁 Duplicate Entries          : ${duplicates.length}\n`;
+    report += `🔧 Auto Fixes Applied         : ${autoFixes.length}\n`;
+    report += `⚠️ Validation Errors          : ${validationErrors.length}\n\n`;
+
+    if (dissolved.length > 0) {
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      report += `🚨 DISSOLVED TOURNAMENTS (${dissolved.length})\n`;
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+      dissolved.forEach((d) => {
+        report += `❌ ${d.chName.toUpperCase()}\n`;
+        const parsed = parseDissolvedError(d.error);
+        if (parsed) {
+          report += `   └─ Only ${parsed.actual} valid players found\n`;
+          report += `      Mode      : ${parsed.mode}\n`;
+          report += `      Required  : ${parsed.target}\n`;
+          report += `      Minimum   : ${parsed.min}\n`;
+          if (parsed.teams && parsed.teams !== "Invalid Link") {
+            report += `      Teams in responses sheet : ${parsed.teams}\n`;
+          }
+          report += `\n`;
+        } else {
+          report += `   └─ ${d.error}\n\n`;
+        }
       });
-      text += `\n`;
     }
 
-    if (viewErrors.length > 0) {
-      text += `⚠️ LOGS & ISSUES:\n`;
-      viewErrors.forEach((e) => {
-        text += `[${e.chName}] ${e.error}\n`;
+    if (accessibility.length > 0) {
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      report += `🔓 ACCESSIBILITY & LINK FAULTS (${accessibility.length})\n`;
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+      accessibility.forEach((a) => {
+        report += `❌ ${a.chName.toUpperCase()}\n`;
+        const match = a.error.match(/(.*?)\.\s*\(Teams in responses sheet:\s*([^)]*)\)/i);
+        if (match) {
+          report += `   ├─ ${match[1].trim()}\n`;
+          report += `   └─ Teams in responses sheet : ${match[2].trim()}\n\n`;
+        } else {
+          report += `   └─ ${a.error}\n\n`;
+        }
       });
     }
 
-    navigator.clipboard.writeText(text);
+    if (duplicates.length > 0) {
+      type ParsedDup = NonNullable<ReturnType<typeof parseDuplicateError>>;
+      const fakes: Record<string, Record<string, ParsedDup[]>> = {};
+      const cross: Record<string, Record<string, ParsedDup[]>> = {};
+      const internal: Record<string, ParsedDup[]> = {};
+
+      duplicates.forEach((d) => {
+        const parsed = parseDuplicateError(d);
+        if (!parsed) {
+          const ch = d.chName.trim();
+          if (!internal[ch]) internal[ch] = [];
+          internal[ch].push({
+            name: d.error,
+            server: "",
+            uid: "",
+            prevCh: ch,
+            currCh: ch,
+            isFakedServer: false,
+            prevServer: null,
+          });
+          return;
+        }
+
+        const currCh = parsed.currCh.trim();
+        const prevCh = parsed.prevCh.trim();
+
+        if (parsed.isFakedServer) {
+          if (!fakes[currCh]) fakes[currCh] = {};
+          if (!fakes[currCh][prevCh]) fakes[currCh][prevCh] = [];
+          if (!fakes[currCh][prevCh].some((p) => p.uid === parsed.uid && p.name === parsed.name)) {
+            fakes[currCh][prevCh].push(parsed);
+          }
+        } else if (prevCh.toLowerCase() === currCh.toLowerCase()) {
+          if (!internal[currCh]) internal[currCh] = [];
+          if (!internal[currCh].some((p) => p.uid === parsed.uid && p.name === parsed.name)) {
+            internal[currCh].push(parsed);
+          }
+        } else {
+          if (!cross[currCh]) cross[currCh] = {};
+          if (!cross[currCh][prevCh]) cross[currCh][prevCh] = [];
+          if (!cross[currCh][prevCh].some((p) => p.uid === parsed.uid && p.name === parsed.name)) {
+            cross[currCh][prevCh].push(parsed);
+          }
+        }
+      });
+
+      // 1. Cross-Server Duplicates with altered servers (if any)
+      const fakeKeys = Object.keys(fakes).sort();
+      if (fakeKeys.length > 0) {
+        report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        report += `🔁 DUPLICATE MLBB IDs (DIFFERENT SERVERS ENTERED)\n`;
+        report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+        fakeKeys.forEach((ch, idx) => {
+          if (idx > 0) {
+            report += `──────────────────────────────────────\n\n`;
+          }
+          const prevChs = Object.keys(fakes[ch]).sort();
+          prevChs.forEach((prevCh, pIdx) => {
+            if (pIdx > 0) report += `\n`;
+            const list = fakes[ch][prevCh];
+            report += `【${ch.toUpperCase()}】 ${list.length} duplicate(s) with altered server\n`;
+            report += `Duplicate MLBB ID with ► ${prevCh}\n\n`;
+            list.forEach((p) => {
+              report += ` • ${p.name}\n`;
+              report += `   UID            : ${p.uid}\n`;
+              report += `   Entered Server : ${p.server} (Submitted by ${ch})\n`;
+              if (p.prevServer) {
+                report += `   Original Server: ${p.prevServer} (Original in ${prevCh})\n`;
+              }
+              report += `\n`;
+            });
+          });
+        });
+      }
+
+      // 2. Cross-Host Duplicates
+      const crossKeys = Object.keys(cross).sort();
+      if (crossKeys.length > 0) {
+        report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        report += `🔁 CROSS-HOST DUPLICATES\n`;
+        report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+        crossKeys.forEach((ch, idx) => {
+          if (idx > 0) {
+            report += `──────────────────────────────────────\n\n`;
+          }
+          const prevChs = Object.keys(cross[ch]).sort();
+          prevChs.forEach((prevCh, pIdx) => {
+            if (pIdx > 0) report += `\n`;
+            const list = cross[ch][prevCh];
+            report += `【${ch.toUpperCase()}】 ${list.length} duplicate(s)\n`;
+            report += `Duplicated with ► ${prevCh}\n\n`;
+            list.forEach((p) => {
+              report += ` • ${p.name}\n`;
+              report += `   Server: ${p.server}\n`;
+              report += `   UID   : ${p.uid}\n\n`;
+            });
+          });
+        });
+      }
+
+      // 3. Internal Duplicates
+      const internalKeys = Object.keys(internal).sort();
+      if (internalKeys.length > 0) {
+        report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        report += `📄 INTERNAL DUPLICATES\n`;
+        report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+        internalKeys.forEach((ch, idx) => {
+          if (idx > 0) {
+            report += `──────────────────────────────────────\n\n`;
+          }
+          const list = internal[ch];
+          report += `【${ch.toUpperCase()}】 ${list.length} duplicate(s)\n\n`;
+          list.forEach((p) => {
+            report += ` • ${p.name}\n`;
+            if (p.server) {
+              report += `   Server: ${p.server}\n`;
+              report += `   UID   : ${p.uid}\n\n`;
+            } else {
+              report += `\n`;
+            }
+          });
+        });
+      }
+    }
+
+    const autoFixKeys = Object.keys(autoFixesGrouped).sort();
+    if (autoFixKeys.length > 0) {
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      report += `🔧 AUTO FIXES\n`;
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+      autoFixKeys.forEach((ch, idx) => {
+        if (idx > 0) {
+          report += `──────────────────────────────────────\n\n`;
+        }
+        report += `✅ ${ch}\n\n`;
+        autoFixesGrouped[ch].forEach((f) => {
+          report += `${f}\n\n`;
+        });
+      });
+    }
+
+    const valKeys = Object.keys(validationGrouped).sort();
+    if (valKeys.length > 0) {
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      report += `⚠️ VALIDATION ERRORS\n`;
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+      valKeys.forEach((ch, idx) => {
+        if (idx > 0) {
+          report += `──────────────────────────────────────\n\n`;
+        }
+        report += `❌ ${ch}\n\n`;
+        validationGrouped[ch].forEach((v) => {
+          report += `${v}\n\n`;
+        });
+      });
+    }
+
+    report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    report += `✅ REPORT COMPLETE\n`;
+    report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+
+    navigator.clipboard.writeText(report);
     toast("Report summary copied to clipboard!", "success");
   };
 
@@ -1035,7 +1455,7 @@ export default function Dashboard() {
                                   : "bg-amber-500/20 text-amber-300 border-amber-500/40"
                               }`}
                             >
-                              {isFake ? "🚨 FAKE SERVER DUPLICATE" : "MLBB PLAYER"}
+                              {isFake ? "DIFFERENT SERVER DUPLICATE" : "MLBB PLAYER"}
                             </span>
                           </div>
 
@@ -1046,7 +1466,7 @@ export default function Dashboard() {
                             </div>
                             {isFake && parsed.prevServer && (
                               <div className="text-rose-400 font-bold">
-                                Real Server: {parsed.prevServer} (Spoofed: {parsed.server})
+                                Entered Server: {parsed.server} | Original Server: {parsed.prevServer}
                               </div>
                             )}
                           </div>
@@ -1058,7 +1478,7 @@ export default function Dashboard() {
                             </div>
                             <span className="text-slate-500">➡️</span>
                             <div className="text-right">
-                              <span className="text-slate-500 font-bold block text-[9px] uppercase">Copied By CH</span>
+                              <span className="text-slate-500 font-bold block text-[9px] uppercase">Duplicate In CH</span>
                               <span className={`font-bold ${isFake ? "text-rose-400" : "text-amber-400"}`}>
                                 {parsed.currCh}
                               </span>
