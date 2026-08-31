@@ -84,6 +84,21 @@ export async function resolveUrl(shortUrl: string): Promise<ResolveResult | Reso
         clearTimeout(timeoutId);
       } catch (fetchErr: any) {
         clearTimeout(timeoutId);
+        // Retry once with redirect: "follow" in case cloud proxies reject manual redirects
+        try {
+          const followRes = await fetch(currentUrl, {
+            method: "GET",
+            redirect: "follow",
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            },
+          });
+          const followId = extractSpreadsheetId(followRes.url);
+          if (followId) {
+            return { spreadsheetId: followId, finalUrl: followRes.url };
+          }
+        } catch (e) {}
+
         if (fetchErr.name === "AbortError") {
           return { error: `URL resolution timed out after 6s at ${currentUrl}` };
         }
@@ -110,6 +125,23 @@ export async function resolveUrl(shortUrl: string): Promise<ResolveResult | Reso
 
         currentUrl = nextUrl;
         continue;
+      }
+
+      // Fallback check if response not ok
+      if (!response.ok && response.status !== 404) {
+        try {
+          const followRes = await fetch(currentUrl, {
+            method: "GET",
+            redirect: "follow",
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            },
+          });
+          const followId = extractSpreadsheetId(followRes.url);
+          if (followId) {
+            return { spreadsheetId: followId, finalUrl: followRes.url };
+          }
+        } catch (e) {}
       }
 
       // Check for 200 OK
