@@ -4,6 +4,18 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import { ToastProvider, toast } from "./Toast";
+import { BrandLogo, SettingsPillButton, AppFooter } from "./BrandNav";
+import {
+  FileSpreadsheet,
+  CheckCircle2,
+  ArrowLeft,
+  Sparkles,
+  ShieldCheck,
+  Zap,
+  Info,
+  Check,
+  Layers,
+} from "lucide-react";
 
 interface JobFormProps {
   editJobId?: string;
@@ -65,7 +77,6 @@ export function JobForm({ editJobId }: JobFormProps) {
     setSubmitting(true);
     try {
       if (isEditing) {
-        // Parse URL for spreadsheetId and GID
         const match = reportingSheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
         const gidMatch = reportingSheetUrl.match(/[?&#]gid=(\d+)/);
 
@@ -116,7 +127,7 @@ export function JobForm({ editJobId }: JobFormProps) {
           const data = await res.json();
           throw new Error(data.error || "Failed to create job");
         }
-        toast("Job created!", "success");
+        toast("Job created successfully!", "success");
       }
       router.push("/dashboard");
     } catch (error: any) {
@@ -126,241 +137,326 @@ export function JobForm({ editJobId }: JobFormProps) {
     }
   };
 
-  if (loading) return (
-    <div className="flex flex-col justify-center items-center min-h-[60vh] gap-4">
-      <div className="w-10 h-10 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-      <div className="text-sm font-medium text-white/40 animate-pulse">Loading job...</div>
-    </div>
-  );
+  if (loading) {
+    return (
+      <div className="flex flex-col justify-center items-center min-h-[60vh] gap-4 bg-cream-100">
+        <div className="w-12 h-12 border-3 border-ink border-t-rust rounded-full animate-spin" />
+        <div className="text-xs font-mono font-bold uppercase tracking-widest text-ink/60 animate-pulse">
+          Loading Job Configuration...
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <>
+    <div className="min-h-screen bg-cream-100 text-ink selection:bg-rust/20 px-4 sm:px-6 py-6 flex flex-col justify-between">
       <ToastProvider />
-      <form onSubmit={handleSubmit} className="max-w-3xl mx-auto px-4 py-6 md:py-10 space-y-8 animate-fade-in">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <div>
-            <h2 className="text-3xl font-extrabold text-slate-50 tracking-tight">{isEditing ? "Edit" : "New"} Sync Job</h2>
-            <p className="text-slate-400 mt-2 text-sm font-medium">{isEditing ? "Update your synchronization configurations." : "Consolidate sheets from multiple CHs into one."}</p>
-          </div>
-          <Link href="/dashboard" className="btn-ghost">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
-            Dashboard
-          </Link>
+
+      {/* Header Bar */}
+      <header className="w-full max-w-4xl mx-auto flex items-center justify-between pt-2 pb-6">
+        <Link href="/dashboard" className="btn-retro-pill">
+          <ArrowLeft className="w-3.5 h-3.5" />
+          <span>Dashboard</span>
+        </Link>
+
+        <BrandLogo size="md" />
+
+        <SettingsPillButton />
+      </header>
+
+      {/* Main Form Content */}
+      <main className="flex-1 max-w-3xl w-full mx-auto my-4 space-y-8 animate-fade-in">
+        <div className="text-center space-y-2">
+          <span className="text-xs font-black uppercase tracking-[0.25em] text-rust">
+            {isEditing ? "MODIFY CONFIGURATION" : "STEP ONE"}
+          </span>
+          <h1 className="font-serif-title text-3xl sm:text-4xl md:text-5xl font-black text-ink tracking-tight">
+            {isEditing ? "EDIT SYNC JOB" : "PICK YOUR PIPELINE"}
+            <span className="text-rust">.</span>
+          </h1>
+          <p className="text-xs sm:text-sm font-bold uppercase tracking-wider text-ink/60 max-w-lg mx-auto">
+            {isEditing
+              ? "Update your spreadsheet sources and validation constraints"
+              : "Select pipeline type and connect your Google Sheets"}
+          </p>
         </div>
 
-        <div className="bg-slate-800 rounded-3xl p-6 md:p-10 space-y-12 shadow-2xl shadow-indigo-500/5 border border-slate-700/50">
-          
-          {/* Stepper Header */}
-          <div className="w-full relative flex items-center justify-between max-w-lg mx-auto mb-16 mt-4">
-             <div className="absolute left-0 top-1/2 -translate-y-1/2 w-full h-[2px] bg-slate-700/50 -z-10" />
-             <div className="flex flex-col items-center relative z-10">
-               <div className="w-10 h-10 rounded-full bg-indigo-500 border-4 border-slate-800 flex items-center justify-center text-slate-50 font-bold shadow-lg shadow-indigo-500/20">1</div>
-               <span className="text-xs font-bold text-indigo-400 absolute -bottom-8 whitespace-nowrap">Job Details</span>
-             </div>
-             <div className="flex flex-col items-center relative z-10">
-               <div className="w-10 h-10 rounded-full bg-indigo-500 border-4 border-slate-800 flex items-center justify-center text-slate-50 font-bold shadow-lg shadow-indigo-500/20">2</div>
-               <span className="text-xs font-bold text-indigo-400 absolute -bottom-8 whitespace-nowrap">Reporting Sheet</span>
-             </div>
-             <div className="flex flex-col items-center relative z-10">
-               <div className="w-10 h-10 rounded-full bg-indigo-500 border-4 border-slate-800 flex items-center justify-center text-slate-50 font-bold shadow-lg shadow-indigo-500/20">3</div>
-               <span className="text-xs font-bold text-indigo-400 absolute -bottom-8 whitespace-nowrap">Targets & Options</span>
-             </div>
-          </div>
-
-          {/* Step 1: Type & Name */}
-          <div className="space-y-6">
-            <h3 className="text-lg font-bold text-slate-50 flex items-center gap-2">
-              <svg className="w-5 h-5 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-              Basic Details
-            </h3>
-
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-slate-300">Job Name *</label>
-              <input
-                value={name}
-                onChange={e => setName(e.target.value)}
-                className="input-field"
-                placeholder="e.g. March 2026 Event"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-slate-300">Job Type</label>
-              <div className="grid grid-cols-2 gap-3">
-                <label className={`relative flex items-center justify-center p-4 rounded-xl border-2 cursor-pointer transition-all duration-200 gap-3 ${
+        <form onSubmit={handleSubmit} className="space-y-8">
+          {/* STEP ONE: Pick Your Pipeline (Two tactile cards from reference design) */}
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+              {/* Diamond Rewards Card */}
+              <div
+                onClick={() => setType("diamonds")}
+                className={`card-stitched p-6 flex flex-col items-center justify-center text-center space-y-3 cursor-pointer transition-all duration-200 ${
                   type === "diamonds"
-                    ? "bg-indigo-500/10 border-indigo-500/50 text-indigo-400 shadow-lg shadow-indigo-500/10"
-                    : "bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800"
-                }`}>
-                  <input type="radio" value="diamonds" checked={type === "diamonds"} onChange={() => setType("diamonds")} className="sr-only" />
-                  <span className="text-xl">💎</span>
-                  <div>
-                    <span className="block text-sm font-bold text-slate-50">Diamond Rewards</span>
-                    <span className="block text-[10px] text-slate-500 font-mono mt-0.5">NAME, SERVER, UID, CODE, AMOUNT</span>
-                  </div>
-                </label>
-                <label className={`relative flex items-center justify-center p-4 rounded-xl border-2 cursor-pointer transition-all duration-200 gap-3 ${
-                  type === "prl"
-                    ? "bg-indigo-500/10 border-indigo-500/50 text-indigo-400 shadow-lg shadow-indigo-500/10"
-                    : "bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800"
-                }`}>
-                  <input type="radio" value="prl" checked={type === "prl"} onChange={() => setType("prl")} className="sr-only" />
-                  <span className="text-xl">📋</span>
-                  <div>
-                    <span className="block text-sm font-bold text-slate-50">Pre-Registered List</span>
-                    <span className="block text-[10px] text-slate-500 font-mono mt-0.5">Players Name, Age, IGN, Server, UID</span>
-                  </div>
-                </label>
-              </div>
-            </div>
-
-            <div className="space-y-3 pt-2">
-              <label className="text-sm font-semibold text-slate-300">Tournament Format</label>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                {["5v5", "3v3", "2v2", "1v1", "Onsite 5v5"].map((mode) => (
-                  <label key={mode} className={`relative flex items-center justify-center p-3 rounded-xl border-2 cursor-pointer transition-all duration-200 ${
-                    gameMode === mode
-                      ? "bg-indigo-500/10 border-indigo-500/50 text-indigo-400 shadow-md shadow-indigo-500/10"
-                      : "bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
-                  }`}>
-                    <input type="radio" value={mode} checked={gameMode === mode} onChange={() => setGameMode(mode)} className="sr-only" />
-                    <span className={`text-sm tracking-wide ${gameMode === mode ? "font-bold" : "font-medium"}`}>{mode}</span>
-                  </label>
-                ))}
-              </div>
-              <div className="flex items-start gap-2 pt-2">
-                <svg className="w-3.5 h-3.5 text-slate-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                <p className="text-[11px] text-slate-400 leading-tight">
-                  Sets extraction columns and constraints.<br/>
-                  <span className="text-slate-300 font-medium">Standard 5v5 = 46 min (10 teams). Onsite 5v5 = 25 min (5 teams).</span>
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="h-px bg-slate-700/50" />
-
-          {/* Step 2: Reporting Sheet */}
-          <div className="space-y-6">
-            <h3 className="text-lg font-bold text-slate-50 flex items-center gap-2">
-              <svg className="w-5 h-5 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
-              Source Reporting Sheet
-            </h3>
-
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-slate-300">1st Source: Official Reporting Sheet URL *</label>
-              <input
-                value={reportingSheetUrl}
-                onChange={e => setReportingSheetUrl(e.target.value)}
-                className="input-field font-mono !text-xs !py-4"
-                placeholder="https://docs.google.com/spreadsheets/d/.../edit?gid=... (Official Sheet)"
-              />
-              <div className="flex flex-col gap-3 p-5 rounded-2xl bg-indigo-500/10 border border-indigo-500/25 mt-3 space-y-2">
-                <div className="flex items-start gap-3">
-                  <svg className="w-5 h-5 text-indigo-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                  <div className="text-xs text-indigo-300 font-bold">
-                    Paste the full URL of the 1st Source (Official Sheet) including the <code className="text-indigo-200 bg-indigo-500/25 px-1.5 py-0.5 rounded">?gid=...</code> tab ID.
-                  </div>
+                    ? "ring-3 ring-rust !border-ink shadow-retro bg-white scale-[1.02]"
+                    : "bg-white/80 opacity-80 hover:opacity-100"
+                }`}
+              >
+                <div className="icon-box-retro w-14 h-14 text-2xl">
+                  💎
                 </div>
-                <div className="text-xs text-indigo-300/80 leading-relaxed space-y-1 bg-slate-900/50 p-3.5 rounded-xl border border-indigo-500/10">
-                  <p>✨ <strong className="text-white">Smart Column Detection Enabled:</strong> Automatically scans for header names:</p>
-                  <ul className="list-disc pl-4 mt-1 space-y-1 font-mono text-[10px] text-slate-300">
-                    <li><strong className="text-indigo-200">CH Nickname</strong></li>
-                    <li><strong className="text-indigo-200">Tournament Response Sheet</strong></li>
-                    <li><strong className="text-indigo-200">{type === "diamonds" ? "Diamond Winners Sheet" : "Pre Registered List Link"}</strong></li>
-                  </ul>
-                  <p className="mt-2 text-red-400/90 text-[10px] font-semibold flex items-center gap-1">
-                    ⚠️ Ensure the sheet is shared as "Anyone with the link can view".
+                <div className="space-y-1">
+                  <h3 className="font-serif-title text-lg md:text-xl font-black text-ink">
+                    DIAMOND REWARDS
+                  </h3>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-rust">
+                    WINNERS CONSOLIDATION
                   </p>
                 </div>
-              </div>
-            </div>
-
-            <div className="space-y-2 pt-4">
-              <label className="text-sm font-semibold text-slate-300">2nd Source: Trainee Reporting Sheet URL (Optional)</label>
-              <input
-                value={secondaryReportingSheetUrl}
-                onChange={e => setSecondaryReportingSheetUrl(e.target.value)}
-                className="input-field font-mono !text-xs !py-4"
-                placeholder="https://docs.google.com/spreadsheets/d/.../edit?gid=... (Trainee Sheet)"
-              />
-              <p className="text-[11px] text-slate-400 font-medium">
-                Add an optional 2nd source (Trainee Sheet) to cross-check duplicate MLBB IDs across Official CHs and Trainees.
-              </p>
-            </div>
-          </div>
-
-          <div className="h-px bg-slate-700/50" />
-
-          {/* Step 3: Target & Options */}
-          <div className="space-y-6">
-            <h3 className="text-lg font-bold text-slate-50 flex items-center gap-2">
-              <svg className="w-5 h-5 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>
-              Target & Options
-            </h3>
-
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-slate-300">Target Spreadsheet Name {!isEditing && "*"}</label>
-              <input
-                value={targetName}
-                onChange={e => setTargetName(e.target.value)}
-                className="input-field"
-                placeholder={isEditing ? "(leave blank to keep current)" : "e.g. Consolidated PRL - March 2026"}
-              />
-              {!isEditing && (
-                <p className="text-[10px] text-slate-400 flex items-center gap-1.5 mt-1.5 font-medium">
-                  <svg className="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                  A new Google Sheet with this name will be created in your Drive.
+                <p className="text-[11px] text-ink/70 font-medium">
+                  NAME, SERVER, UID, CODE, AMOUNT
                 </p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-slate-300">Tab Name</label>
-              <input
-                value={sheetName}
-                onChange={e => setSheetName(e.target.value)}
-                className="input-field"
-                placeholder={defaultSheetName}
-              />
-            </div>
-
-            <label className="flex items-center gap-4 p-4 rounded-xl bg-slate-900 border border-slate-700 cursor-pointer hover:border-indigo-500/50 transition-all group">
-              <input
-                type="checkbox"
-                checked={validationEnabled}
-                onChange={e => setValidationEnabled(e.target.checked)}
-                className="w-5 h-5 rounded border-slate-600 bg-slate-800 text-indigo-500 focus:ring-indigo-500/50 cursor-pointer"
-              />
-              <div>
-                <span className="block text-sm font-bold text-slate-50 group-hover:text-indigo-400 transition-colors">Enable MooGold Verification</span>
-                <span className="block text-[11px] text-slate-400 mt-1 font-medium">Optionally verify Server & UID via MooGold API</span>
+                {type === "diamonds" && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-rust bg-rust-light px-2.5 py-0.5 rounded-full border border-rust/30">
+                    <Check className="w-3 h-3" /> Selected
+                  </span>
+                )}
               </div>
-            </label>
-          </div>
-        </div>
 
-        <div className="flex justify-end pt-4">
-          <button
-            type="submit"
-            disabled={submitting}
-            className="btn-primary"
-          >
-            {submitting ? (
-              <>
-                <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-                {isEditing ? "Saving Changes..." : "Creating Job..."}
-              </>
-            ) : (
-              <>
-                {isEditing ? "Save Changes" : "Create Sync Job"}
-                <svg className="w-5 h-5 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
-              </>
-            )}
-          </button>
-        </div>
-      </form>
-    </>
+              {/* PRL Card */}
+              <div
+                onClick={() => setType("prl")}
+                className={`card-stitched p-6 flex flex-col items-center justify-center text-center space-y-3 cursor-pointer transition-all duration-200 ${
+                  type === "prl"
+                    ? "ring-3 ring-rust !border-ink shadow-retro bg-white scale-[1.02]"
+                    : "bg-white/80 opacity-80 hover:opacity-100"
+                }`}
+              >
+                <div className="icon-box-retro w-14 h-14 text-2xl">
+                  📋
+                </div>
+                <div className="space-y-1">
+                  <h3 className="font-serif-title text-lg md:text-xl font-black text-ink">
+                    PRE-REGISTERED LIST
+                  </h3>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-rust">
+                    5V5 TEAM VALIDATION
+                  </p>
+                </div>
+                <p className="text-[11px] text-ink/70 font-medium">
+                  PLAYERS NAME, AGE, IGN, SERVER, UID
+                </p>
+                {type === "prl" && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-rust bg-rust-light px-2.5 py-0.5 rounded-full border border-rust/30">
+                    <Check className="w-3 h-3" /> Selected
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* STEP TWO: Basic Details & Tournament Format */}
+          <div className="card-retro p-6 sm:p-8 space-y-6 bg-white">
+            <div className="flex items-center justify-between border-b-2 border-dashed border-ink/20 pb-4">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-rust">STEP TWO</span>
+                <h3 className="font-serif-title text-xl font-black text-ink">Event & Basic Details</h3>
+              </div>
+              <span className="text-xl">🏷️</span>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-black uppercase tracking-wider text-ink">
+                  Job Name <span className="text-rust">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. March 2026 Championship Finals"
+                  className="input-retro"
+                  required
+                />
+              </div>
+
+              <div className="space-y-2 pt-2">
+                <label className="text-xs font-black uppercase tracking-wider text-ink">
+                  Tournament Format
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+                  {["5v5", "3v3", "2v2", "1v1", "Onsite 5v5"].map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setGameMode(mode)}
+                      className={`py-2 px-3 rounded-xl border-2 font-black text-xs transition-all cursor-pointer ${
+                        gameMode === mode
+                          ? "bg-ink text-white border-ink shadow-retro-sm"
+                          : "bg-cream-50 text-ink border-ink/40 hover:border-ink hover:bg-cream-100"
+                      }`}
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-ink/60 font-medium pt-1">
+                  Standard 5v5 requires 10 teams (46 players min). Onsite 5v5 requires 5 teams (25 players min).
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* STEP THREE: Source Spreadsheets */}
+          <div className="card-retro p-6 sm:p-8 space-y-6 bg-white">
+            <div className="flex items-center justify-between border-b-2 border-dashed border-ink/20 pb-4">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-rust">STEP THREE</span>
+                <h3 className="font-serif-title text-xl font-black text-ink">Source Spreadsheets</h3>
+              </div>
+              <span className="text-xl">📄</span>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-black uppercase tracking-wider text-ink">
+                  1st Source: Official Reporting Sheet URL <span className="text-rust">*</span>
+                </label>
+                <input
+                  type="url"
+                  value={reportingSheetUrl}
+                  onChange={(e) => setReportingSheetUrl(e.target.value)}
+                  placeholder="https://docs.google.com/spreadsheets/d/.../edit#gid=... (Official Sheet)"
+                  className="input-retro font-mono !text-xs"
+                  required
+                />
+              </div>
+
+              {/* Helper Ticket */}
+              <div className="p-4 rounded-xl border-2 border-dashed border-ink/25 bg-cream-50 space-y-2 text-xs">
+                <div className="flex items-center gap-2 font-black text-ink">
+                  <Sparkles className="w-4 h-4 text-rust" />
+                  <span>Smart Column Detection & URL Resolution</span>
+                </div>
+                <p className="text-ink/70 leading-relaxed text-[11px]">
+                  Paste the full Google Sheet link including the <code className="bg-white px-1.5 py-0.5 rounded border border-ink/20 font-mono font-bold text-ink">#gid=...</code> tab ID. The engine automatically discovers CH columns and resolves shortlinks.
+                </p>
+                <p className="text-[10px] font-black text-rust flex items-center gap-1">
+                  ⚠️ Make sure the sheet sharing is set to "Anyone with the link can view".
+                </p>
+              </div>
+
+              <div className="space-y-1.5 pt-2">
+                <label className="text-xs font-black uppercase tracking-wider text-ink">
+                  2nd Source: Trainee Reporting Sheet URL (Optional)
+                </label>
+                <input
+                  type="url"
+                  value={secondaryReportingSheetUrl}
+                  onChange={(e) => setSecondaryReportingSheetUrl(e.target.value)}
+                  placeholder="https://docs.google.com/spreadsheets/d/.../edit#gid=... (Trainees Sheet)"
+                  className="input-retro font-mono !text-xs"
+                />
+                <p className="text-[11px] text-ink/60 font-medium">
+                  Add an optional secondary sheet to combine Official and Trainee CH submissions with cross-sheet duplicate detection.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* STEP FOUR: Destination & Validation */}
+          <div className="card-retro p-6 sm:p-8 space-y-6 bg-white">
+            <div className="flex items-center justify-between border-b-2 border-dashed border-ink/20 pb-4">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-rust">STEP FOUR</span>
+                <h3 className="font-serif-title text-xl font-black text-ink">Destination & Validation</h3>
+              </div>
+              <span className="text-xl">🎯</span>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-black uppercase tracking-wider text-ink">
+                  Target Spreadsheet Name {!isEditing && <span className="text-rust">*</span>}
+                </label>
+                <input
+                  type="text"
+                  value={targetName}
+                  onChange={(e) => setTargetName(e.target.value)}
+                  placeholder={isEditing ? "(Leave blank to keep existing)" : "e.g. Consolidated Rewards - Event 2026"}
+                  className="input-retro"
+                  required={!isEditing}
+                />
+                {!isEditing && (
+                  <p className="text-[11px] text-ink/60 font-medium">
+                    A new Google Sheet with this name will be created automatically in your Google Drive.
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-black uppercase tracking-wider text-ink">
+                  Output Tab Name
+                </label>
+                <input
+                  type="text"
+                  value={sheetName}
+                  onChange={(e) => setSheetName(e.target.value)}
+                  placeholder={defaultSheetName}
+                  className="input-retro"
+                />
+              </div>
+
+              {/* MooGold Verification Option */}
+              <div
+                onClick={() => setValidationEnabled(!validationEnabled)}
+                className={`p-4 rounded-xl border-2 cursor-pointer transition-all flex items-center justify-between ${
+                  validationEnabled
+                    ? "border-ink bg-rust-light shadow-retro-sm"
+                    : "border-dashed border-ink/30 bg-cream-50 hover:bg-cream-100"
+                }`}
+              >
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className={`w-4 h-4 ${validationEnabled ? "text-rust" : "text-ink/60"}`} />
+                    <span className="text-xs font-black uppercase tracking-wider text-ink">
+                      MooGold MLBB Account Verification
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-ink/70 font-medium">
+                    Automatically verify player Game UIDs and Server IDs in parallel via MooGold API.
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={validationEnabled}
+                  onChange={() => {}}
+                  className="w-5 h-5 rounded border-2 border-ink text-rust focus:ring-rust cursor-pointer"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Action Footer Buttons */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t-2 border-dashed border-ink/20">
+            <Link href="/dashboard" className="btn-retro-pill w-full sm:w-auto text-center">
+              — BACK TO DASHBOARD —
+            </Link>
+
+            <button
+              type="submit"
+              disabled={submitting}
+              className="btn-retro-primary w-full sm:w-auto !py-3.5 !px-8 text-sm font-black shadow-retro cursor-pointer disabled:opacity-50"
+            >
+              {submitting ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span>{isEditing ? "SAVING CHANGES..." : "CREATING JOB..."}</span>
+                </>
+              ) : (
+                <>
+                  <span>{isEditing ? "SAVE CHANGES" : "CREATE SYNC JOB"}</span>
+                  <CheckCircle2 className="w-4 h-4" />
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </main>
+
+      <AppFooter />
+    </div>
   );
 }

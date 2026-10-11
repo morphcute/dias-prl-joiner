@@ -3,127 +3,353 @@
 @tailwind utilities;
 
 :root {
-  --bg-primary: #0f172a;
-  --bg-secondary: #1e293b;
-  --bg-card: #1e293b;
-  --border-subtle: #334155;
-  --border-medium: #475569;
-  --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
-  --accent-blue: #6366f1;
-  --accent-emerald: #10b981;
-  --accent-violet: #8b5cf6;
-  --accent-amber: #f59e0b;
-  --accent-rose: #ef4444;
+  --bg-primary: #F5EFEB;
+  --bg-card: #FFFFFF;
+  --border-ink: #1C1917;
+  --text-ink: #1C1917;
+  --text-muted: #78716C;
+  --accent-rust: #C85A32;
+  --accent-amber: #E29B2E;
+  --accent-sage: #2D6A4F;
+  --shadow-retro: 4px 6px 0px #1C1917;
 }
 
 body {
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: #F5EFEB;
+  color: #1C1917;
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   min-height: 100vh;
 }
 
-/* Glass panels */
-.glass-panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  backdrop-filter: blur(20px);
+/* Titles and Serif Typography */
+.font-serif-title {
+  font-family: 'DM Serif Display', Georgia, serif;
+  letter-spacing: 0.02em;
 }
 
-.glass-card {
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid var(--border-subtle);
-  transition: all 0.2s;
-}
-
-.glass-card:hover {
-  background: rgba(255, 255, 255, 0.04);
-  border-color: var(--border-medium);
-}
-
-.gradient-border {
+/* Vintage Paper Card */
+.card-retro {
+  background-color: #FFFFFF;
+  border: 2px solid #1C1917;
+  border-radius: 1.25rem;
+  box-shadow: 4px 6px 0px #1C1917;
   position: relative;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
-.gradient-border::before {
+.card-retro:hover {
+  transform: translateY(-2px);
+  box-shadow: 5px 8px 0px #1C1917;
+}
+
+/* Stitched Retro Card with Top & Bottom Perforations */
+.card-stitched {
+  background-color: #FFFFFF;
+  border: 2px solid #1C1917;
+  border-radius: 1.25rem;
+  box-shadow: 4px 6px 0px #1C1917;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.card-stitched::before {
   content: '';
   position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(139, 92, 246, 0.2), rgba(16, 185, 129, 0.1));
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
+  top: 6px;
+  left: 12px;
+  right: 12px;
+  border-top: 1.5px dashed #1C1917;
   pointer-events: none;
+  opacity: 0.8;
+}
+
+.card-stitched::after {
+  content: '';
+  position: absolute;
+  bottom: 6px;
+  left: 12px;
+  right: 12px;
+  border-bottom: 1.5px dashed #1C1917;
+  pointer-events: none;
+  opacity: 0.8;
+}
+
+.card-stitched:hover {
+  transform: translateY(-2px);
+  box-shadow: 6px 9px 0px #1C1917;
+}
+
+.card-stitched:active {
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0px #1C1917;
+}
+
+/* Dark Icon Box with Rust Shadow */
+.icon-box-retro {
+  background-color: #1C1917;
+  border-radius: 0.875rem;
+  box-shadow: 3px 3px 0px #C85A32;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #FFFFFF;
+  transition: transform 0.15s ease;
 }
 
 /* Buttons */
-.btn-primary {
-  @apply px-5 py-2.5 bg-indigo-500 hover:bg-indigo-400 text-slate-50 font-bold rounded-xl text-sm transition-all duration-200 flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/20 active:scale-95;
+.btn-retro-primary {
+  background-color: #C85A32;
+  color: #FFFFFF;
+  font-weight: 700;
+  border: 2px solid #1C1917;
+  border-radius: 0.875rem;
+  padding: 0.65rem 1.25rem;
+  box-shadow: 3px 4px 0px #1C1917;
+  transition: all 0.12s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
 }
 
-.btn-ghost {
-  @apply px-5 py-2.5 bg-transparent hover:bg-slate-800 text-slate-400 hover:text-slate-50 font-semibold rounded-xl text-sm transition-all duration-200 flex items-center gap-2 border border-slate-700 hover:border-slate-600;
+.btn-retro-primary:hover {
+  background-color: #B34E29;
+  transform: translateY(-1px);
+  box-shadow: 4px 5px 0px #1C1917;
 }
 
-.btn-danger {
-  @apply px-5 py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-bold rounded-xl text-sm transition-all duration-200 flex items-center gap-2 border border-red-500/20 active:scale-95;
+.btn-retro-primary:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0px #1C1917;
+}
+
+.btn-retro-dark {
+  background-color: #1C1917;
+  color: #FFFFFF;
+  font-weight: 700;
+  border: 2px solid #1C1917;
+  border-radius: 0.875rem;
+  padding: 0.65rem 1.25rem;
+  box-shadow: 3px 4px 0px #1C1917;
+  transition: all 0.12s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.btn-retro-dark:hover {
+  background-color: #292524;
+  transform: translateY(-1px);
+  box-shadow: 4px 5px 0px #1C1917;
+}
+
+.btn-retro-dark:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0px #1C1917;
+}
+
+.btn-retro-pill {
+  background-color: transparent;
+  color: #1C1917;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  font-size: 0.75rem;
+  border: 1.5px dashed #1C1917;
+  border-radius: 9999px;
+  padding: 0.5rem 1.25rem;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  text-transform: uppercase;
+}
+
+.btn-retro-pill:hover {
+  background-color: #FFFFFF;
+  border-style: solid;
+  transform: translateY(-1px);
+  box-shadow: 2px 3px 0px #1C1917;
+}
+
+.btn-retro-pill:active {
+  transform: translate(1px, 1px);
+  box-shadow: 0px 0px 0px #1C1917;
+}
+
+/* Settings Pill Button (Matching top-right of reference image) */
+.btn-settings-pill {
+  background-color: #FFFFFF;
+  border: 2px solid #1C1917;
+  border-radius: 0.75rem;
+  box-shadow: 2px 3px 0px #1C1917;
+  padding: 0.5rem;
+  color: #1C1917;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-settings-pill:hover {
+  transform: translateY(-1px);
+  box-shadow: 3px 4px 0px #1C1917;
+  background-color: #FAF7F2;
+}
+
+.btn-settings-pill:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0px 0px 0px #1C1917;
 }
 
 /* Inputs */
-.input-field {
-  @apply w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-slate-50 placeholder-slate-500 focus:outline-none focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20 transition-all shadow-inner;
+.input-retro {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background-color: #FFFFFF;
+  border: 2px solid #1C1917;
+  border-radius: 0.875rem;
+  font-size: 0.875rem;
+  color: #1C1917;
+  box-shadow: 2px 3px 0px #1C1917;
+  transition: all 0.15s ease;
+  outline: none;
 }
 
-.textarea-field {
-  @apply w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-sm text-slate-50 placeholder-slate-500 focus:outline-none focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20 transition-all font-mono resize-none shadow-inner;
+.input-retro:focus {
+  border-color: #C85A32;
+  box-shadow: 3px 4px 0px #C85A32;
 }
 
-/* Badges */
-.badge-running {
-  @apply inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20;
+.input-retro::placeholder {
+  color: #A8A29E;
 }
 
-.badge-success {
-  @apply inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20;
+.textarea-retro {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background-color: #FFFFFF;
+  border: 2px solid #1C1917;
+  border-radius: 0.875rem;
+  font-size: 0.875rem;
+  color: #1C1917;
+  box-shadow: 2px 3px 0px #1C1917;
+  transition: all 0.15s ease;
+  outline: none;
+  font-family: 'Space Mono', monospace;
+  resize: none;
 }
 
-.badge-failed {
-  @apply inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-semibold bg-red-500/10 text-red-400 border border-red-500/20;
+.textarea-retro:focus {
+  border-color: #C85A32;
+  box-shadow: 3px 4px 0px #C85A32;
 }
 
-.badge-pending {
-  @apply inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-semibold bg-white/[0.06] text-white/40 border border-white/[0.08];
+/* Badges / Stamps */
+.stamp-running {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: 9999px;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  background-color: #FFF7ED;
+  color: #C2410C;
+  border: 1.5px dashed #C2410C;
 }
 
-.badge-diamonds {
-  @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20;
+.stamp-success {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: 9999px;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  background-color: #ECFDF5;
+  color: #047857;
+  border: 1.5px solid #047857;
 }
 
-.badge-prl {
-  @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-violet-500/10 text-violet-400 border border-violet-500/20;
+.stamp-failed {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: 9999px;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  background-color: #FEF2F2;
+  color: #B91C1C;
+  border: 1.5px dashed #B91C1C;
 }
 
-/* Table */
-.table-row-hover {
-  @apply transition-colors hover:bg-white/[0.02];
+.stamp-diamonds {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 9999px;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  background-color: #FEF3C7;
+  color: #B45309;
+  border: 1.5px solid #1C1917;
+}
+
+.stamp-prl {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 9999px;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  background-color: #EEF2FF;
+  color: #4338CA;
+  border: 1.5px solid #1C1917;
+}
+
+/* Dashed Dividers */
+.divider-dashed {
+  border-top: 1.5px dashed #1C1917;
+  opacity: 0.3;
+}
+
+/* Filmstrip / Perforated Progress Bar */
+.filmstrip-bar {
+  background: repeating-linear-gradient(
+    90deg,
+    #1C1917 0px,
+    #1C1917 8px,
+    transparent 8px,
+    transparent 14px
+  );
 }
 
 /* Animations */
 .animate-fade-in {
-  animation: fadeIn 0.5s ease-out forwards;
+  animation: fadeIn 0.4s ease-out forwards;
 }
 
 .animate-slide-up {
-  animation: slideUp 0.5s ease-out forwards;
+  animation: slideUp 0.4s ease-out forwards;
 }
-
-.stagger-1 { animation-delay: 0.1s; opacity: 0; }
-.stagger-2 { animation-delay: 0.2s; opacity: 0; }
-.stagger-3 { animation-delay: 0.3s; opacity: 0; }
 
 @keyframes fadeIn {
   from { opacity: 0; }
@@ -135,21 +361,31 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* Scrollbar */
+@keyframes progressStripes {
+  from { background-position: 0 0; }
+  to { background-position: 28px 0; }
+}
+
+.animate-stripes {
+  animation: progressStripes 1s linear infinite;
+}
+
+/* Custom Scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: transparent;
+  background: #EFE6DB;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
+  background: #1C1917;
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: #44403C;
 }
+

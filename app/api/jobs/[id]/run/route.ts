@@ -5,7 +5,7 @@ import { syncDiamonds } from "@/lib/sync-diamonds";
 import { syncPrl } from "@/lib/sync-prl";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300; // 5 minutes (Needed for MooGold verifier which takes time)
+export const maxDuration = 900; // 15 minutes for large CH tournaments and MooGold validation
 
 export async function POST(
   request: Request,

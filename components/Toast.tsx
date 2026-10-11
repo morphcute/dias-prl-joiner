@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { CheckCircle2, AlertCircle, Info, X } from "lucide-react";
 
 type ToastType = "success" | "error" | "info";
 
@@ -24,34 +25,48 @@ export function ToastProvider() {
     setToasts((prev) => [...prev, { id, message, type }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4000);
+    }, 4500);
   }, []);
 
   useEffect(() => {
     globalAddToast = addToast;
-    return () => { globalAddToast = null; };
+    return () => {
+      globalAddToast = null;
+    };
   }, [addToast]);
+
+  const removeToast = (id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  };
 
   const getIcon = (type: ToastType) => {
     switch (type) {
       case "success":
-        return <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>;
+        return <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />;
       case "error":
-        return <svg className="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>;
+        return <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />;
       default:
-        return <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
+        return <Info className="w-5 h-5 text-rust shrink-0" />;
     }
   };
 
   return (
-    <div className="fixed bottom-6 right-6 z-[100] space-y-2 max-w-sm">
+    <div className="fixed bottom-6 right-6 z-[100] space-y-3 max-w-sm pointer-events-none">
       {toasts.map((t) => (
         <div
           key={t.id}
-          className="glass-panel rounded-xl px-4 py-3 flex items-center gap-3 animate-slide-up border border-white/[0.1] shadow-xl"
+          className="card-retro pointer-events-auto p-4 flex items-center justify-between gap-3 animate-slide-up shadow-retro border-2 border-ink bg-white"
         >
-          {getIcon(t.type)}
-          <span className="text-sm text-white/80">{t.message}</span>
+          <div className="flex items-center gap-3">
+            {getIcon(t.type)}
+            <span className="text-xs font-bold text-ink leading-snug">{t.message}</span>
+          </div>
+          <button
+            onClick={() => removeToast(t.id)}
+            className="p-1 rounded hover:bg-cream-100 text-ink/50 hover:text-ink transition-colors cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       ))}
     </div>

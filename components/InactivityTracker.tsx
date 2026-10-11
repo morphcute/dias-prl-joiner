@@ -154,32 +154,32 @@ export function InactivityTracker() {
   const formattedTime = `${minutes}:${seconds < 10 ? "0" : ""}${seconds}`;
 
   return (
-    <div className="fixed bottom-6 right-6 z-[99999] max-w-md animate-in slide-in-from-bottom-5 fade-in duration-300">
-      <div className="p-4 rounded-2xl bg-slate-900/95 border border-amber-500/40 backdrop-blur-xl shadow-2xl shadow-amber-500/10 text-slate-100 flex items-start gap-3">
-        <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 shrink-0">
+    <div className="fixed bottom-6 right-6 z-[99999] max-w-md animate-slide-up">
+      <div className="card-retro p-4.5 bg-white border-2 border-ink shadow-retro text-ink flex items-start gap-3.5">
+        <div className="p-2 rounded-xl bg-amber-100 text-amber-800 border-2 border-ink shrink-0 shadow-retro-sm">
           <AlertCircle className="w-5 h-5" />
         </div>
-        <div className="flex-1 space-y-1">
+        <div className="flex-1 space-y-1.5">
           <div className="flex items-center justify-between">
-            <h4 className="font-extrabold text-sm text-white">Inactivity Warning</h4>
-            <span className="font-mono text-xs font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+            <h4 className="font-serif-title font-black text-base text-ink">Inactivity Notice</h4>
+            <span className="font-mono text-xs font-black text-rust bg-cream-100 px-2 py-0.5 rounded border border-ink/40">
               {formattedTime}
             </span>
           </div>
-          <p className="text-xs text-slate-300 leading-relaxed">
-            You will be logged out in <strong className="text-amber-300">{formattedTime}</strong> due to 30 minutes of inactivity to keep your Google Sheet permissions secure.
+          <p className="text-xs text-ink/75 leading-relaxed font-medium">
+            You will be automatically signed out in <strong className="text-rust">{formattedTime}</strong> due to 30 minutes of inactivity to keep your Google Sheet credentials secure.
           </p>
           <div className="pt-2 flex items-center gap-2">
             <button
               onClick={recordActivity}
-              className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 transition-all active:scale-95 shadow-md shadow-indigo-600/20"
+              className="btn-retro-primary !py-1.5 !px-3 text-xs"
             >
               <RefreshCw className="w-3.5 h-3.5" />
               Stay Signed In
             </button>
             <button
               onClick={handleSignOut}
-              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition-colors"
+              className="btn-retro-pill !py-1.5 !px-3 text-xs"
             >
               Log Out Now
             </button>
@@ -188,4 +188,5 @@ export function InactivityTracker() {
       </div>
     </div>
   );
+
 }

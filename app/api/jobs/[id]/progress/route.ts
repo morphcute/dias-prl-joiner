@@ -41,21 +41,21 @@ export async function GET(
     );
   }
 
-  // Stale Run Recovery: If run is in "running" status but hasn't updated in > 2.5 minutes (150,000 ms),
-  // auto-mark it as failed.
+  // Stale Run Recovery: If run is in "running" status but has exceeded max execution window (25 minutes),
+  // auto-mark it as failed so abandoned zombie runs do not lock the UI forever.
   if (run.status === "running") {
-    const STALE_TIMEOUT_MS = 150000;
+    const STALE_TIMEOUT_MS = 25 * 60 * 1000; // 25 minutes
     const lastUpdate = new Date((run as any).updatedAt || run.startedAt).getTime();
     const elapsed = Date.now() - lastUpdate;
 
     if (elapsed > STALE_TIMEOUT_MS) {
-      console.warn(`[Auto-Recovery] Marking run ${run.id} as failed (stalled for ${Math.round(elapsed / 1000)}s)`);
+      console.warn(`[Auto-Recovery] Marking run ${run.id} as failed (exceeded 25 min timeout: ${Math.round(elapsed / 1000)}s)`);
       const updatedRun = await prisma.joinerRun.update({
         where: { id: run.id },
         data: {
           status: "failed",
           progress: 100,
-          progressMessage: "Sync connection timed out. Click 'Sync Now' to resume.",
+          progressMessage: "Sync timed out after 25 minutes. Click 'Sync Now' to restart.",
           completedAt: new Date(),
         },
       });

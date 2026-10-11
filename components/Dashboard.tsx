@@ -6,6 +6,7 @@ import { signOut } from "next-auth/react";
 import Modal from "./Modal";
 import { toast, ToastProvider } from "./Toast";
 import { Background3D } from "./Background3D";
+import { BrandLogo, SettingsPillButton, AppFooter } from "./BrandNav";
 import {
   Sparkles,
   Plus,
@@ -31,6 +32,8 @@ import {
   Download,
   AlertCircle,
   FileText,
+  Clock,
+  ArrowRight,
 } from "lucide-react";
 
 interface ChError {
@@ -76,6 +79,26 @@ type ProgressData = {
   errors?: ChError[];
   rowsWritten?: number;
 };
+
+/**
+ * Helper to parse step ratio (e.g., "2/62", "15/60") from live progress strings
+ */
+function parseProgressRatio(message?: string | null): {
+  current: number;
+  total: number;
+  ratioStr: string;
+} | null {
+  if (!message) return null;
+  const match = message.match(/(\d+)\s*\/\s*(\d+)/);
+  if (match) {
+    return {
+      current: parseInt(match[1], 10),
+      total: parseInt(match[2], 10),
+      ratioStr: `${match[1]}/${match[2]}`,
+    };
+  }
+  return null;
+}
 
 export default function Dashboard() {
   const [jobs, setJobs] = useState<JoinerJob[]>([]);
@@ -123,7 +146,7 @@ export default function Dashboard() {
   const pollJobStatus = useCallback((jobId: string) => {
     if (pollersRef.current.has(jobId)) return;
 
-    const interval = setInterval(async () => {
+    const checkStatus = async () => {
       try {
         const res = await fetch(`/api/jobs/${jobId}/progress?t=${Date.now()}`, {
           cache: "no-store",
@@ -139,15 +162,24 @@ export default function Dashboard() {
         });
 
         if (data.status !== "running") {
-          clearInterval(interval);
+          setStartingJobs((prev) => {
+            const next = new Set(prev);
+            next.delete(jobId);
+            return next;
+          });
+          const poller = pollersRef.current.get(jobId);
+          if (poller) clearInterval(poller);
           pollersRef.current.delete(jobId);
           fetchJobs();
         }
       } catch (e) {
         console.error(e);
       }
-    }, 1000);
+    };
 
+    // Immediate first check so there is no delay
+    checkStatus();
+    const interval = setInterval(checkStatus, 1000);
     pollersRef.current.set(jobId, interval);
   }, []);
 
@@ -158,20 +190,19 @@ export default function Dashboard() {
         headers: { "Cache-Control": "no-cache" },
       });
       if (res.status === 401) return;
-      if (res.ok) {
-        const data: JoinerJob[] = await res.json();
-        setJobs(data);
+      if (!res.ok) throw new Error("Failed to load jobs");
+      const data = await res.json();
+      setJobs(data);
 
-        // Auto-attach poller to any running job
-        data.forEach((job) => {
-          const latestRunStatus = job.runs?.[0]?.status;
-          if (latestRunStatus === "running") {
-            pollJobStatus(job.id);
-          }
-        });
-      }
+      data.forEach((job: JoinerJob) => {
+        const status = job.runs?.[0]?.status;
+        if (status === "running") {
+          pollJobStatus(job.id);
+        }
+      });
     } catch (e) {
       console.error(e);
+      toast("Failed to load sync jobs", "error");
     } finally {
       setLoading(false);
     }
@@ -179,23 +210,45 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchJobs();
-    const timer = setInterval(fetchJobs, 8000);
-    return () => clearInterval(timer);
+    return () => {
+      pollersRef.current.forEach((interval) => clearInterval(interval));
+      pollersRef.current.clear();
+    };
   }, [fetchJobs]);
 
   const handleStartRun = async (job: JoinerJob) => {
     setStartingJobs((prev) => new Set(prev).add(job.id));
+
+    // 1. Immediately reflect running state in the UI so progress bar mounts instantly
+    setRunProgress((prev) => {
+      const next = new Map(prev);
+      next.set(job.id, {
+        status: "running",
+        progress: 2,
+        progressMessage: "Initiating Google Cloud Sheets connection...",
+      });
+      return next;
+    });
+
+    // 2. Start polling immediately in the background so updates stream in real-time
+    pollJobStatus(job.id);
+
     try {
-      const res = await fetch(`/api/jobs/${job.id}/run`, { method: "POST" });
+      const res = await fetch(`/api/jobs/${job.id}/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to start run");
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Failed to start sync");
       }
-      toast(`Sync started for "${job.name}"`, "info");
-      pollJobStatus(job.id);
+
+      const data = await res.json();
+      toast(`Sync finished! ${data.rowsWritten || 0} rows written.`, "success");
       fetchJobs();
     } catch (e: any) {
       toast(e.message, "error");
+      fetchJobs();
     } finally {
       setStartingJobs((prev) => {
         const next = new Set(prev);
@@ -210,21 +263,28 @@ export default function Dashboard() {
     try {
       const res = await fetch(`/api/jobs/${job.id}/stop`, { method: "POST" });
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to stop run");
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Failed to stop sync");
       }
-      toast(`Stopping sync for "${job.name}"...`, "info");
 
-      if (pollersRef.current.has(job.id)) {
-        clearInterval(pollersRef.current.get(job.id)!);
+      const poller = pollersRef.current.get(job.id);
+      if (poller) {
+        clearInterval(poller);
         pollersRef.current.delete(job.id);
       }
+
       setRunProgress((prev) => {
         const next = new Map(prev);
-        next.delete(job.id);
+        next.set(job.id, {
+          status: "failed",
+          progress: 0,
+          progressMessage: "Operation cancelled by user.",
+        });
         return next;
       });
+
       fetchJobs();
+      toast(`Sync stopped for "${job.name}"`, "info");
     } catch (e: any) {
       toast(e.message, "error");
     } finally {
@@ -241,151 +301,86 @@ export default function Dashboard() {
     try {
       const res = await fetch(`/api/jobs/${selectedJob.id}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Failed to delete job");
-      toast(`Job "${selectedJob.name}" deleted`, "success");
+      setJobs((prev) => prev.filter((j) => j.id !== selectedJob.id));
       setDeleteModalOpen(false);
       setSelectedJob(null);
-      fetchJobs();
+      toast("Job deleted successfully", "success");
     } catch (e: any) {
       toast(e.message, "error");
     }
   };
 
-  // Open Log & CH Health Diagnostics Modal
   const openLogModal = (job: JoinerJob) => {
     setSelectedJob(job);
+    const live = runProgress.get(job.id);
     const latestRun = job.runs?.[0];
-    if (latestRun) {
-      let parsedErrors: ChError[] = [];
+
+    let errs: ChError[] = [];
+    if (live?.errors) {
+      errs = live.errors;
+    } else if (latestRun?.errors) {
       if (typeof latestRun.errors === "string") {
         try {
-          parsedErrors = JSON.parse(latestRun.errors);
+          errs = JSON.parse(latestRun.errors);
         } catch {
-          parsedErrors = [{ chName: "General", error: latestRun.errors }];
+          errs = [];
         }
-      } else if (Array.isArray(latestRun.errors)) {
-        parsedErrors = latestRun.errors;
+      } else {
+        errs = latestRun.errors as ChError[];
       }
-      setViewErrors(parsedErrors);
-
-      const chStatsStr = (latestRun as any)?.chStats;
-      const parsedStats = typeof chStatsStr === "string" ? JSON.parse(chStatsStr) : chStatsStr || [];
-      setViewStats(parsedStats);
-    } else {
-      setViewErrors([]);
-      setViewStats([]);
     }
+
+    let stats: { chName: string; count: number }[] = [];
+    if (latestRun?.chStats) {
+      if (typeof latestRun.chStats === "string") {
+        try {
+          stats = JSON.parse(latestRun.chStats);
+        } catch {
+          stats = [];
+        }
+      } else {
+        stats = latestRun.chStats as { chName: string; count: number }[];
+      }
+    }
+
+    setViewErrors(errs);
+    setViewStats(stats);
     setActiveLogTab("overview");
     setModalSearch("");
     setErrorsModalOpen(true);
   };
 
-  // Categorize errors
-  const getErrorType = (
-    err: ChError
-  ): "duplicate" | "dissolved" | "accessibility" | "rule_violation" | "validation_fixed" | "validation_error" => {
-    const type = (err.type || "").toLowerCase();
-    const msg = (err.error || "").toLowerCase();
-
-    if (type === "rule_violation" || msg.includes("rules") || msg.includes("no link")) return "rule_violation";
-    if (type === "accessibility") return "accessibility";
-    if (type === "validation_fixed") return "validation_fixed";
-    if (type === "validation_error") return "validation_error";
-
-    if (msg.includes("duplicate")) return "duplicate";
-    if (msg.includes("dissolved") || msg.includes("empty tournament") || msg.includes("no actual players")) return "dissolved";
-    if (
-      msg.includes("403") ||
-      msg.includes("404") ||
-      msg.includes("permission") ||
-      msg.includes("not found") ||
-      msg.includes("error reading sheet") ||
-      msg.includes("cannot access") ||
-      msg.includes("timeout") ||
-      msg.includes("blank or missing") ||
-      msg.includes("url resolution failed") ||
-      msg.includes("could not find header row")
-    ) {
-      return "accessibility";
-    }
-    if (
-      msg.includes("auto-fixed") ||
-      msg.includes("mixed server/uid") ||
-      msg.includes("swapped") ||
-      msg.includes("auto-corrected") ||
-      msg.includes("interchanged") ||
-      msg.includes("column mapping")
-    ) {
+  const getErrorType = (err: ChError) => {
+    const errorStr = err.error || "";
+    if (err.type === "validation_fixed" || errorStr.includes("automatically corrected") || errorStr.includes("Mixed Server/UID")) {
       return "validation_fixed";
     }
-    return "validation_error";
+    if (err.type === "validation_error" || errorStr.startsWith("Validation Error")) {
+      return "validation_error";
+    }
+    if (errorStr.includes("Duplicate")) {
+      return "duplicate";
+    }
+    if (errorStr.includes("Dissolved Tournament")) {
+      return "dissolved";
+    }
+    if (errorStr.includes("NO PRL LINK") || errorStr.includes("NO LINK") || errorStr.includes("Empty Tournament")) {
+      return "rule_violation";
+    }
+    return "accessibility";
   };
 
-  // Parse duplicate string
   const parseDuplicateError = (err: ChError) => {
-    const msg = err.error || "";
+    const isFaked = err.error.includes("different servers entered");
+    const nameMatch = err.error.match(/player "(.*?)"/i);
+    const uidMatch = err.error.match(/UID (?:#)?(\d+)/i);
+    const serverMatch = err.error.match(/(?:Server |server )(\d+)/i);
+    const prevChMatch = err.error.match(/(?:submitted by|originally in) (.*?)(?:\)|,|\.|$)/i);
+    const prevServerMatch = err.error.match(/Original Server: (\d+)/i);
 
-    // 1. Same Server Normal Duplicate
-    const sameServerRegex =
-      /(?:Duplicate player entry found|Duplicate winner found):\s*(.*?)\s*\(Server:\s*([^,)]*),\s*UID:\s*([^)]*)\)\s*was\s*already\s*registered\s*(?:earlier\s*)?in\s*CH\s*(.*)/i;
-    const match1 = msg.match(sameServerRegex);
-    if (match1) {
+    if (uidMatch) {
       return {
-        name: match1[1].trim(),
-        server: match1[2].trim(),
-        uid: match1[3].trim(),
-        prevCh: match1[4].trim(),
-        currCh: err.chName.trim(),
-        isFakedServer: false,
-        prevServer: null as string | null,
-      };
-    }
-
-    // 2. Duplicate with altered server - format A:
-    const diffServerRegex1 =
-      /(?:Duplicate|Fake duplicate) MLBB ID found.*:\s*(.*?)\s*\(UID:\s*([^,)]*),\s*Server:\s*([^)]*)\)\s*was\s*registered\s*in\s*CH\s*(.*?),\s*but\s*originally\s*registered\s*with\s*Server\s*([^ ]*)\s*in\s*CH\s*(.*)/i;
-    const match2 = msg.match(diffServerRegex1);
-    if (match2) {
-      return {
-        name: match2[1].trim(),
-        uid: match2[2].trim(),
-        server: match2[3].trim(),
-        currCh: match2[4].trim() || err.chName.trim(),
-        prevServer: match2[5].trim(),
-        prevCh: match2[6].trim(),
-        isFakedServer: true,
-      };
-    }
-
-    // 3. Duplicate with altered server - format B:
-    const diffServerRegex2 =
-      /(?:Duplicate|Fake duplicate) MLBB ID found.*:\s*(.*?)\s*\(UID:\s*([^,)]*),\s*Server:\s*([^)]*)\)\s*was\s*already\s*registered\s*(?:earlier\s*)?in\s*CH\s*(.*?)(?:\s*\(with Server:\s*([^)]*)\))?$/i;
-    const match3 = msg.match(diffServerRegex2);
-    if (match3) {
-      return {
-        name: match3[1].trim(),
-        uid: match3[2].trim(),
-        server: match3[3].trim(),
-        prevCh: match3[4].trim(),
-        prevServer: match3[5] ? match3[5].trim() : null,
-        currCh: err.chName.trim(),
-        isFakedServer: true,
-      };
-    }
-
-    // 4. Legacy / Fallback matching
-    const nameMatch = msg.match(/Player "([^"]+)"/) || msg.match(/player ([^(:]+)/i);
-    const uidMatch = msg.match(/UID:?\s*(\d+)/i);
-    const serverMatch = msg.match(/Server:?\s*(\d+)/i);
-    const prevServerMatch = msg.match(/Real Server:?\s*(\d+)/i);
-    const prevChMatch = msg.match(/in (.*?) \(row/) || msg.match(/in CH (.*)/i);
-    const isFaked =
-      msg.toLowerCase().includes("faked") ||
-      msg.toLowerCase().includes("fake") ||
-      msg.toLowerCase().includes("different server");
-
-    if (nameMatch && uidMatch) {
-      return {
-        name: nameMatch[1].trim(),
+        name: nameMatch ? nameMatch[1].trim() : "Unknown Player",
         uid: uidMatch[1].trim(),
         server: serverMatch ? serverMatch[1].trim() : "N/A",
         prevServer: prevServerMatch ? prevServerMatch[1].trim() : null,
@@ -394,11 +389,9 @@ export default function Dashboard() {
         isFakedServer: isFaked,
       };
     }
-
     return null;
   };
 
-  // Helper to parse dissolved tournament errors
   const parseDissolvedError = (errStr: string) => {
     const match =
       errStr.match(
@@ -419,24 +412,13 @@ export default function Dashboard() {
     return null;
   };
 
-  // Format date helper
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return "N/A";
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return "N/A";
     const months = [
-      "January",
-      "February",
-      "March",
-      "April",
-      "May",
-      "June",
-      "July",
-      "August",
-      "September",
-      "October",
-      "November",
-      "December",
+      "January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December",
     ];
     const month = months[d.getMonth()];
     const day = d.getDate();
@@ -449,7 +431,6 @@ export default function Dashboard() {
     return `${month} ${day}, ${year} • ${hours}:${minutes} ${ampm}`;
   };
 
-  // Copy Summary Report to Clipboard
   const copyTextReport = () => {
     if (!selectedJob) return;
     const latestRun = selectedJob.runs?.[0];
@@ -461,82 +442,9 @@ export default function Dashboard() {
     const autoFixes = viewErrors.filter((e) => getErrorType(e) === "validation_fixed");
     const validationErrors = viewErrors.filter((e) => getErrorType(e) === "validation_error");
 
-    const autoFixesGrouped: Record<string, string[]> = {};
-    autoFixes.forEach((f) => {
-      const ch = f.chName;
-      if (!autoFixesGrouped[ch]) {
-        autoFixesGrouped[ch] = [];
-      }
-
-      const mixedMatch = f.error.match(/Mixed Server\/UID extracted for player (.*?) \(Server: (.*?), UID: (.*?)\)/i);
-      if (mixedMatch) {
-        autoFixesGrouped[ch].push(
-          ` • Mixed Server/UID extracted\n   Player : ${mixedMatch[1].trim()}\n   Server : ${mixedMatch[2].trim()}\n   UID    : ${mixedMatch[3].trim()}`
-        );
-      } else if (f.error.toLowerCase().includes("column mapping")) {
-        autoFixesGrouped[ch].push(` • Column mapping automatically corrected\n   (Misaligned headers detected)`);
-      } else if (f.error.toLowerCase().includes("interchanged") || f.error.toLowerCase().includes("swapped")) {
-        const playerMatch = f.error.match(/player (.*)/i);
-        const namePart = playerMatch ? playerMatch[1].trim() : "Unknown";
-        autoFixesGrouped[ch].push(` • Swapped Server/UID columns automatically corrected\n   Player : ${namePart}`);
-      } else {
-        autoFixesGrouped[ch].push(` • ${f.error}`);
-      }
-    });
-
-    const validationGrouped: Record<string, string[]> = {};
-    validationErrors.forEach((v) => {
-      const ch = v.chName;
-      if (!validationGrouped[ch]) {
-        validationGrouped[ch] = [];
-      }
-
-      const textServerMatch = v.error.match(/Added text instead of numerical Server for player (.*?) \(Input: '(.*?)'\)/i);
-      const ignServerMatch = v.error.match(/Added Players IGN instead of Server for player (.*)/i);
-      const missingMatch = v.error.match(/Missing Server or UID for player (.*?) \(Server: '(.*?)',\s*UID: '(.*?)'\)/i);
-      const shortUidMatch = v.error.match(/Missing UID because the CH type (.*?) numbers only for player (.*)/i);
-      const spaceUidMatch = v.error.match(/UID contains spaces for player (.*?) \(Input: '(.*?)'\)/i);
-      const spaceServerMatch = v.error.match(/Server contains spaces for player (.*?) \(Input: '(.*?)'\)/i);
-      const negativeMatch = v.error.match(/Negative sign detected for player (.*?) \(Raw Server: (.*?), Raw UID: (.*?)\)/i);
-      const serverLengthMatch = v.error.match(/Server length is unusually long for player (.*?) \(Server: (.*?)\)/i);
-      const serverInUidMatch = v.error.match(/Server entered in UID column for player (.*?) \(Server: (.*?), UID: (.*?)\)/i);
-
-      if (textServerMatch) {
-        validationGrouped[ch].push(
-          ` • Player : ${textServerMatch[1].trim()}\n   Error  : Server must be numeric\n   Input  : "${textServerMatch[2].trim()}"`
-        );
-      } else if (ignServerMatch) {
-        validationGrouped[ch].push(` • Player : ${ignServerMatch[1].trim()}\n   Error  : Player IGN entered instead of Server`);
-      } else if (missingMatch) {
-        validationGrouped[ch].push(
-          ` • Player : ${missingMatch[1].trim()}\n   Error  : Missing Server or UID\n   Input  : Server: '${missingMatch[2]}', UID: '${missingMatch[3]}'`
-        );
-      } else if (shortUidMatch) {
-        validationGrouped[ch].push(` • Player : ${shortUidMatch[2].trim()}\n   Error  : Missing UID (only typed server/short ID)`);
-      } else if (spaceUidMatch) {
-        validationGrouped[ch].push(` • Player : ${spaceUidMatch[1].trim()}\n   Error  : UID contains spaces\n   Input  : "${spaceUidMatch[2]}"`);
-      } else if (spaceServerMatch) {
-        validationGrouped[ch].push(` • Player : ${spaceServerMatch[1].trim()}\n   Error  : Server contains spaces\n   Input  : "${spaceServerMatch[2]}"`);
-      } else if (negativeMatch) {
-        validationGrouped[ch].push(
-          ` • Player : ${negativeMatch[1].trim()}\n   Error  : Negative sign detected in IDs\n   Input  : Raw Server: ${negativeMatch[2]}, Raw UID: ${negativeMatch[3]}`
-        );
-      } else if (serverLengthMatch) {
-        validationGrouped[ch].push(
-          ` • Player : ${serverLengthMatch[1].trim()}\n   Error  : Server length unusually long\n   Input  : "${serverLengthMatch[2]}"`
-        );
-      } else if (serverInUidMatch) {
-        validationGrouped[ch].push(
-          ` • Player : ${serverInUidMatch[1].trim()}\n   Error  : Server entered in UID column\n   Input  : Server: ${serverInUidMatch[2]}, UID: ${serverInUidMatch[3]}`
-        );
-      } else {
-        validationGrouped[ch].push(` • ${v.error}`);
-      }
-    });
-
     let report = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
     report += `📊 ${selectedJob.name.toUpperCase()}\n`;
-    report += `OPERATION SUMMARY REPORT\n`;
+    report += `OPERATION SUMMARY REPORT • DIAS & PRL\n`;
     report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
     report += `🆔 Run ID     : ${latestRun?.id || "N/A"}\n`;
@@ -599,177 +507,14 @@ export default function Dashboard() {
       });
     }
 
-    if (duplicates.length > 0) {
-      type ParsedDup = NonNullable<ReturnType<typeof parseDuplicateError>>;
-      const fakes: Record<string, Record<string, ParsedDup[]>> = {};
-      const cross: Record<string, Record<string, ParsedDup[]>> = {};
-      const internal: Record<string, ParsedDup[]> = {};
-
-      duplicates.forEach((d) => {
-        const parsed = parseDuplicateError(d);
-        if (!parsed) {
-          const ch = d.chName.trim();
-          if (!internal[ch]) internal[ch] = [];
-          internal[ch].push({
-            name: d.error,
-            server: "",
-            uid: "",
-            prevCh: ch,
-            currCh: ch,
-            isFakedServer: false,
-            prevServer: null,
-          });
-          return;
-        }
-
-        const currCh = parsed.currCh.trim();
-        const prevCh = parsed.prevCh.trim();
-
-        if (parsed.isFakedServer) {
-          if (!fakes[currCh]) fakes[currCh] = {};
-          if (!fakes[currCh][prevCh]) fakes[currCh][prevCh] = [];
-          if (!fakes[currCh][prevCh].some((p) => p.uid === parsed.uid && p.name === parsed.name)) {
-            fakes[currCh][prevCh].push(parsed);
-          }
-        } else if (prevCh.toLowerCase() === currCh.toLowerCase()) {
-          if (!internal[currCh]) internal[currCh] = [];
-          if (!internal[currCh].some((p) => p.uid === parsed.uid && p.name === parsed.name)) {
-            internal[currCh].push(parsed);
-          }
-        } else {
-          if (!cross[currCh]) cross[currCh] = {};
-          if (!cross[currCh][prevCh]) cross[currCh][prevCh] = [];
-          if (!cross[currCh][prevCh].some((p) => p.uid === parsed.uid && p.name === parsed.name)) {
-            cross[currCh][prevCh].push(parsed);
-          }
-        }
-      });
-
-      // 1. Cross-Server Duplicates with altered servers (if any)
-      const fakeKeys = Object.keys(fakes).sort();
-      if (fakeKeys.length > 0) {
-        report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-        report += `🔁 DUPLICATE MLBB IDs (DIFFERENT SERVERS ENTERED)\n`;
-        report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-
-        fakeKeys.forEach((ch, idx) => {
-          if (idx > 0) {
-            report += `──────────────────────────────────────\n\n`;
-          }
-          const prevChs = Object.keys(fakes[ch]).sort();
-          prevChs.forEach((prevCh, pIdx) => {
-            if (pIdx > 0) report += `\n`;
-            const list = fakes[ch][prevCh];
-            report += `【${ch.toUpperCase()}】 ${list.length} duplicate(s) with altered server\n`;
-            report += `Duplicate MLBB ID with ► ${prevCh}\n\n`;
-            list.forEach((p) => {
-              report += ` • ${p.name}\n`;
-              report += `   UID            : ${p.uid}\n`;
-              report += `   Entered Server : ${p.server} (Submitted by ${ch})\n`;
-              if (p.prevServer) {
-                report += `   Original Server: ${p.prevServer} (Original in ${prevCh})\n`;
-              }
-              report += `\n`;
-            });
-          });
-        });
-      }
-
-      // 2. Cross-Host Duplicates
-      const crossKeys = Object.keys(cross).sort();
-      if (crossKeys.length > 0) {
-        report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-        report += `🔁 CROSS-HOST DUPLICATES\n`;
-        report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-
-        crossKeys.forEach((ch, idx) => {
-          if (idx > 0) {
-            report += `──────────────────────────────────────\n\n`;
-          }
-          const prevChs = Object.keys(cross[ch]).sort();
-          prevChs.forEach((prevCh, pIdx) => {
-            if (pIdx > 0) report += `\n`;
-            const list = cross[ch][prevCh];
-            report += `【${ch.toUpperCase()}】 ${list.length} duplicate(s)\n`;
-            report += `Duplicated with ► ${prevCh}\n\n`;
-            list.forEach((p) => {
-              report += ` • ${p.name}\n`;
-              report += `   Server: ${p.server}\n`;
-              report += `   UID   : ${p.uid}\n\n`;
-            });
-          });
-        });
-      }
-
-      // 3. Internal Duplicates
-      const internalKeys = Object.keys(internal).sort();
-      if (internalKeys.length > 0) {
-        report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-        report += `📄 INTERNAL DUPLICATES\n`;
-        report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-
-        internalKeys.forEach((ch, idx) => {
-          if (idx > 0) {
-            report += `──────────────────────────────────────\n\n`;
-          }
-          const list = internal[ch];
-          report += `【${ch.toUpperCase()}】 ${list.length} duplicate(s)\n\n`;
-          list.forEach((p) => {
-            report += ` • ${p.name}\n`;
-            if (p.server) {
-              report += `   Server: ${p.server}\n`;
-              report += `   UID   : ${p.uid}\n\n`;
-            } else {
-              report += `\n`;
-            }
-          });
-        });
-      }
-    }
-
-    const autoFixKeys = Object.keys(autoFixesGrouped).sort();
-    if (autoFixKeys.length > 0) {
-      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-      report += `🔧 AUTO FIXES\n`;
-      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-
-      autoFixKeys.forEach((ch, idx) => {
-        if (idx > 0) {
-          report += `──────────────────────────────────────\n\n`;
-        }
-        report += `✅ ${ch}\n\n`;
-        autoFixesGrouped[ch].forEach((f) => {
-          report += `${f}\n\n`;
-        });
-      });
-    }
-
-    const valKeys = Object.keys(validationGrouped).sort();
-    if (valKeys.length > 0) {
-      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-      report += `⚠️ VALIDATION ERRORS\n`;
-      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-
-      valKeys.forEach((ch, idx) => {
-        if (idx > 0) {
-          report += `──────────────────────────────────────\n\n`;
-        }
-        report += `❌ ${ch}\n\n`;
-        validationGrouped[ch].forEach((v) => {
-          report += `${v}\n\n`;
-        });
-      });
-    }
-
     report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-    report += `✅ REPORT COMPLETE\n`;
+    report += `✅ REPORT COMPLETE • DIAS & PRL AUTO JOINER\n`;
     report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
 
     navigator.clipboard.writeText(report);
-    toast("Report summary copied to clipboard!", "success");
+    toast("Operation summary copied to clipboard!", "success");
   };
 
-  // Export CSV Report
   const exportReportToCSV = () => {
     if (!selectedJob) return;
     let csvContent = "data:text/csv;charset=utf-8,CH Name,Issue / Log Type,Details\n";
@@ -808,147 +553,191 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div className="flex flex-col justify-center items-center min-h-[75vh] gap-4">
+      <div className="flex flex-col justify-center items-center min-h-[75vh] gap-4 bg-cream-100">
         <Background3D />
-        <div className="relative w-14 h-14">
-          <div className="absolute inset-0 border-4 border-indigo-500/20 rounded-full" />
-          <div className="absolute inset-0 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin glow-indigo" />
-        </div>
-        <div className="text-sm font-bold tracking-widest uppercase text-indigo-400 animate-pulse">
-          Connecting to Cyber Command Center...
+        <div className="w-12 h-12 border-3 border-ink border-t-rust rounded-full animate-spin" />
+        <div className="text-xs font-mono font-bold uppercase tracking-widest text-ink/60 animate-pulse">
+          Connecting to Dias & PRL Command Center...
         </div>
       </div>
     );
   }
 
   return (
-    <div className="relative min-h-screen pb-20 selection:bg-indigo-500/40">
+    <div className="min-h-screen bg-cream-100 text-ink selection:bg-rust/20 px-4 sm:px-6 lg:px-8 py-6 flex flex-col justify-between">
       <Background3D />
       <ToastProvider />
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-10 animate-fade-in">
-        {/* Navigation Bar */}
-        <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 glass-panel-3d p-6 rounded-3xl border border-slate-700/60 shadow-2xl">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-600 via-cyan-500 to-emerald-400 flex items-center justify-center text-white shadow-lg shadow-indigo-500/30 border border-white/20">
-              <Zap className="w-6 h-6 animate-pulse" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-2xl font-black text-white tracking-tight">
-                  Dias & PRL Auto Joiner
-                </h1>
-                <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-mono font-bold border border-indigo-500/30 uppercase">
-                  v2.0 Command Center
-                </span>
-              </div>
-              <p className="text-xs text-slate-400 font-medium">
-                Automated Diamond Rewards & PRL Google Sheets Consolidation Platform
-              </p>
-            </div>
+      {/* Top Header Bar */}
+      <header className="w-full max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 pt-2 pb-6">
+        <div className="flex items-center gap-4">
+          <BrandLogo size="md" />
+          <div className="hidden md:block h-6 w-px bg-ink/20" />
+          <div className="hidden md:block">
+            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-rust block">
+              COMMUNITY HERO PLATFORM
+            </span>
+            <span className="text-xs font-bold text-ink/70">
+              Esports Rewards & Roster Consolidation
+            </span>
           </div>
+        </div>
 
-          <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
-            <Link href="/jobs/new" className="btn-primary">
-              <Plus className="w-4 h-4" />
-              <span>Create New Sync Job</span>
-            </Link>
+        <div className="flex items-center gap-3">
+          <Link href="/jobs/new" className="btn-retro-primary !py-2.5 !px-4 text-xs">
+            <Plus className="w-4 h-4" />
+            <span>CREATE SYNC JOB</span>
+          </Link>
 
-            <button
-              onClick={() => signOut({ callbackUrl: "/" })}
-              className="p-3 rounded-xl bg-slate-900/60 hover:bg-slate-800 text-slate-400 hover:text-rose-400 border border-slate-700/70 transition-colors cursor-pointer"
-              title="Sign Out"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
-        </header>
+          <SettingsPillButton />
 
-        {/* 3D Holographic Stat Cards Grid */}
+          <button
+            onClick={() => signOut({ callbackUrl: "/" })}
+            className="btn-retro-pill !py-2 !px-3 text-xs"
+            title="Sign Out"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Sign Out</span>
+          </button>
+        </div>
+      </header>
+
+      {/* Main Container */}
+      <main className="max-w-7xl w-full mx-auto space-y-8 animate-fade-in flex-1">
+        {/* Step Indicator / Section Title */}
+        <div className="text-center sm:text-left space-y-1">
+          <span className="text-xs font-black uppercase tracking-[0.25em] text-rust">
+            ACTIVE WORKFLOW
+          </span>
+          <h1 className="font-serif-title text-3xl sm:text-4xl font-black text-ink tracking-tight">
+            SYSTEM CONTROL<span className="text-rust">.</span>
+          </h1>
+        </div>
+
+        {/* 4 Stat Cards Grid (Matching reference card styling) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-          <div className="glass-card-3d p-6 rounded-3xl space-y-2 relative overflow-hidden group">
-            <div className="flex items-center justify-between text-slate-400">
-              <span className="text-xs font-bold uppercase tracking-wider">Total Active Jobs</span>
-              <Layers className="w-5 h-5 text-indigo-400 group-hover:scale-110 transition-transform" />
+          {/* Card 1: Total Jobs */}
+          <div className="card-retro p-6 space-y-3 bg-white">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-ink/60">
+                ACTIVE JOBS
+              </span>
+              <div className="icon-box-retro w-8 h-8 text-xs">
+                <Layers className="w-4 h-4" />
+              </div>
             </div>
-            <div className="text-4xl font-black text-white tracking-tight">{totalJobs}</div>
-            <div className="flex items-center gap-2 text-xs font-semibold text-slate-400 pt-1">
-              <span className="text-amber-400 font-bold">{diamondCount} 💎 Diamonds</span>
-              <span>•</span>
-              <span className="text-indigo-400 font-bold">{prlCount} 📋 PRL</span>
+            <div className="font-serif-title text-4xl font-black text-ink">
+              {totalJobs}
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <span className="stamp-diamonds">💎 {diamondCount} Dias</span>
+              <span className="stamp-prl">📋 {prlCount} PRL</span>
             </div>
           </div>
 
-          <div className="glass-card-3d p-6 rounded-3xl space-y-2 relative overflow-hidden group">
-            <div className="flex items-center justify-between text-slate-400">
-              <span className="text-xs font-bold uppercase tracking-wider">Rows Processed</span>
-              <FileSpreadsheet className="w-5 h-5 text-emerald-400 group-hover:scale-110 transition-transform" />
+          {/* Card 2: Rows Processed */}
+          <div className="card-retro p-6 space-y-3 bg-white">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-ink/60">
+                TOTAL ROWS
+              </span>
+              <div className="icon-box-retro w-8 h-8 text-xs">
+                <FileSpreadsheet className="w-4 h-4" />
+              </div>
             </div>
-            <div className="text-4xl font-black text-white tracking-tight">{totalRowsProcessed.toLocaleString()}</div>
-            <p className="text-xs font-medium text-emerald-400 flex items-center gap-1 pt-1">
-              <CheckCircle2 className="w-3.5 h-3.5" /> Direct Google Sheets Integration
+            <div className="font-serif-title text-4xl font-black text-ink">
+              {totalRowsProcessed.toLocaleString()}
+            </div>
+            <p className="text-[11px] font-bold text-emerald-700 flex items-center gap-1.5 pt-1">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+              Google Sheets Direct Sync
             </p>
           </div>
 
-          <div className="glass-card-3d p-6 rounded-3xl space-y-2 relative overflow-hidden group">
-            <div className="flex items-center justify-between text-slate-400">
-              <span className="text-xs font-bold uppercase tracking-wider">Execution Pulse</span>
-              <Activity className="w-5 h-5 text-cyan-400 group-hover:scale-110 transition-transform animate-pulse" />
+          {/* Card 3: Execution Pulse */}
+          <div className="card-retro p-6 space-y-3 bg-white">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-ink/60">
+                ENGINE STATUS
+              </span>
+              <div className="icon-box-retro w-8 h-8 text-xs">
+                <Activity className="w-4 h-4" />
+              </div>
             </div>
-            <div className="text-4xl font-black text-white tracking-tight">{runningCount}</div>
-            <p className="text-xs font-semibold text-cyan-400 flex items-center gap-1 pt-1">
-              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
-              {runningCount > 0 ? "Sync Operation Running" : "Engine Standby Ready"}
+            <div className="font-serif-title text-4xl font-black text-ink">
+              {runningCount > 0 ? "BUSY" : "READY"}
+            </div>
+            <p className="text-[11px] font-bold text-ink/70 flex items-center gap-2 pt-1">
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  runningCount > 0 ? "bg-rust animate-ping" : "bg-emerald-600"
+                }`}
+              />
+              <span>{runningCount > 0 ? `${runningCount} Job(s) Active` : "Engine Standby"}</span>
             </p>
           </div>
 
-          <div className="glass-card-3d p-6 rounded-3xl space-y-2 relative overflow-hidden group">
-            <div className="flex items-center justify-between text-slate-400">
-              <span className="text-xs font-bold uppercase tracking-wider">API Validation</span>
-              <ShieldCheck className="w-5 h-5 text-indigo-400 group-hover:scale-110 transition-transform" />
+          {/* Card 4: Validation */}
+          <div className="card-retro p-6 space-y-3 bg-white">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-ink/60">
+                VERIFICATION
+              </span>
+              <div className="icon-box-retro w-8 h-8 text-xs">
+                <ShieldCheck className="w-4 h-4" />
+              </div>
             </div>
-            <div className="text-4xl font-black text-white tracking-tight">MooGold</div>
-            <p className="text-xs font-semibold text-slate-400 pt-1">
-              Fast 10x Parallel User Verification
+            <div className="font-serif-title text-3xl font-black text-ink">
+              MOOGOLD
+            </div>
+            <p className="text-[11px] font-bold text-ink/70 pt-1">
+              MLBB Server & UID Validation
             </p>
           </div>
         </div>
 
-        {/* Toolbar & Filters */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 glass-panel-3d p-4 rounded-2xl border border-slate-700/60">
+        {/* Toolbar & Filter Bar */}
+        <div className="card-retro p-4 sm:p-5 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 bg-white">
           <div className="flex items-center gap-3 flex-1">
             <div className="relative flex-1 max-w-md">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <Search className="w-4 h-4 text-ink/40 absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search jobs by name or target sheet..."
-                className="input-field !py-2.5 !pl-10 !text-xs"
+                placeholder="Search jobs by name or destination sheet..."
+                className="input-retro !py-2 !pl-10 !text-xs"
               />
             </div>
 
-            <div className="flex items-center gap-1 bg-slate-950/60 p-1 rounded-xl border border-slate-800">
+            {/* Filter Pills */}
+            <div className="flex items-center gap-1.5 p-1 rounded-xl border-2 border-ink bg-cream-50">
               <button
                 onClick={() => setTypeFilter("all")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  typeFilter === "all" ? "bg-indigo-600 text-white shadow-md" : "text-slate-400 hover:text-white"
+                className={`px-3 py-1 rounded-lg text-xs font-black transition-all cursor-pointer ${
+                  typeFilter === "all"
+                    ? "bg-ink text-white shadow-retro-sm"
+                    : "text-ink/60 hover:text-ink"
                 }`}
               >
-                All Jobs
+                ALL
               </button>
               <button
                 onClick={() => setTypeFilter("diamonds")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  typeFilter === "diamonds" ? "bg-amber-500/20 text-amber-300 border border-amber-500/30" : "text-slate-400 hover:text-white"
+                className={`px-3 py-1 rounded-lg text-xs font-black transition-all cursor-pointer ${
+                  typeFilter === "diamonds"
+                    ? "bg-rust text-white shadow-retro-sm"
+                    : "text-ink/60 hover:text-ink"
                 }`}
               >
-                💎 Diamonds
+                💎 DIAS
               </button>
               <button
                 onClick={() => setTypeFilter("prl")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  typeFilter === "prl" ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30" : "text-slate-400 hover:text-white"
+                className={`px-3 py-1 rounded-lg text-xs font-black transition-all cursor-pointer ${
+                  typeFilter === "prl"
+                    ? "bg-ink text-white shadow-retro-sm"
+                    : "text-ink/60 hover:text-ink"
                 }`}
               >
                 📋 PRL
@@ -959,8 +748,10 @@ export default function Dashboard() {
           <div className="flex items-center gap-2 justify-end">
             <button
               onClick={() => setViewLayout("grid")}
-              className={`p-2 rounded-xl transition-all cursor-pointer ${
-                viewLayout === "grid" ? "bg-slate-800 text-white border border-slate-700" : "text-slate-400 hover:text-white"
+              className={`p-2 rounded-xl border-2 transition-all cursor-pointer ${
+                viewLayout === "grid"
+                  ? "bg-ink text-white border-ink shadow-retro-sm"
+                  : "bg-white text-ink/60 border-ink/30 hover:border-ink hover:text-ink"
               }`}
               title="Grid View"
             >
@@ -968,8 +759,10 @@ export default function Dashboard() {
             </button>
             <button
               onClick={() => setViewLayout("table")}
-              className={`p-2 rounded-xl transition-all cursor-pointer ${
-                viewLayout === "table" ? "bg-slate-800 text-white border border-slate-700" : "text-slate-400 hover:text-white"
+              className={`p-2 rounded-xl border-2 transition-all cursor-pointer ${
+                viewLayout === "table"
+                  ? "bg-ink text-white border-ink shadow-retro-sm"
+                  : "bg-white text-ink/60 border-ink/30 hover:border-ink hover:text-ink"
               }`}
               title="Table View"
             >
@@ -978,7 +771,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Jobs Grid View */}
+        {/* Jobs List (Grid View) */}
         {viewLayout === "grid" ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filteredJobs.map((job) => {
@@ -986,109 +779,163 @@ export default function Dashboard() {
               const live = runProgress.get(job.id);
               const isStarting = startingJobs.has(job.id);
               const isStopping = stoppingJobs.has(job.id);
-              const isRunning = status === "running" || live?.status === "running";
+              const isFailed = live?.status === "failed" || (!live && status === "failed");
+              const isSuccess = live?.status === "success" || (!live && status === "success");
+              const isRunning = !isFailed && !isSuccess && (status === "running" || live?.status === "running" || isStarting);
+              const ratioInfo = parseProgressRatio(live?.progressMessage);
 
               return (
                 <div
                   key={job.id}
-                  className="glass-card-3d p-6 rounded-3xl flex flex-col justify-between gap-6 border border-slate-700/60 relative overflow-hidden group"
+                  className="card-stitched p-6 flex flex-col justify-between gap-5 bg-white group"
                 >
-                  <div className="space-y-3">
+                  <div className="space-y-4">
+                    {/* Header line with badge and status */}
                     <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <span className={job.type === "diamonds" ? "badge-diamonds mb-2" : "badge-prl mb-2"}>
-                          {job.type === "diamonds" ? "💎 Diamond Rewards" : "📋 Pre-Registered List"}
-                        </span>
-                        <h3 className="text-xl font-black text-white tracking-tight group-hover:text-indigo-400 transition-colors">
-                          {job.name}
-                        </h3>
+                      <div className="flex items-center gap-2">
+                        <div className="icon-box-retro w-10 h-10 text-base">
+                          {job.type === "diamonds" ? "💎" : "📋"}
+                        </div>
+                        <div>
+                          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-rust block">
+                            {job.type === "diamonds" ? "DIAMOND REWARDS" : "PRE-REGISTERED"}
+                          </span>
+                          <span className="text-xs font-bold text-ink/60">
+                            {job.gameMode || "5v5"}
+                          </span>
+                        </div>
                       </div>
 
                       {isRunning ? (
-                        <span className="badge-running">
-                          <RefreshCw className="w-3 h-3 animate-spin" /> Syncing
+                        <span className="stamp-running">
+                          <RefreshCw className="w-3 h-3 animate-spin text-rust" /> {ratioInfo ? ratioInfo.ratioStr : "RUNNING"}
                         </span>
                       ) : status === "success" || job.runs?.[0]?.status === "success" ? (
-                        <span className="badge-success">
-                          <CheckCircle2 className="w-3 h-3" /> Ready
+                        <span className="stamp-success">
+                          <CheckCircle2 className="w-3 h-3" /> READY
                         </span>
                       ) : status === "failed" || job.runs?.[0]?.status === "failed" ? (
-                        <span className="badge-failed">
-                          <AlertTriangle className="w-3 h-3" /> Fault
+                        <span className="stamp-failed">
+                          <AlertTriangle className="w-3 h-3" /> FAULT
                         </span>
                       ) : (
-                        <span className="badge-pending">Idle</span>
+                        <span className="btn-retro-pill !py-0.5 !px-2 text-[9px]">IDLE</span>
                       )}
                     </div>
 
-                    <p className="text-xs font-mono text-slate-400 truncate">
-                      Target: <span className="text-slate-200">{job.targetSpreadsheetName || "Default Target"}</span>
-                    </p>
+                    {/* Job Title in Retro Serif */}
+                    <div>
+                      <h3 className="font-serif-title text-xl font-black text-ink tracking-tight group-hover:text-rust transition-colors">
+                        {job.name}
+                      </h3>
+                      <p className="text-[11px] font-mono text-ink/60 truncate pt-1">
+                        Target: <span className="text-ink font-bold">{job.targetSpreadsheetName || "Default Target"}</span>
+                      </p>
+                    </div>
                   </div>
 
-                  {/* Execution Progress Bar */}
+                  {/* Prominent Progress Loading Bar when Running (with 2/62 Ratio Badge) */}
                   {isRunning && (
-                    <div className="space-y-2 p-3.5 rounded-2xl bg-slate-950/80 border border-indigo-500/30">
-                      <div className="flex justify-between text-xs font-bold text-indigo-300">
-                        <span className="truncate">{live?.progressMessage || "Processing CH sheets..."}</span>
-                        <span>{live?.progress || 0}%</span>
+                    <div className="p-3.5 rounded-xl border-2 border-dashed border-ink/40 bg-cream-50 space-y-2.5 shadow-xs animate-fade-in">
+                      {/* Top indicator: Ratio badge (e.g. "2/62") + Action detail + Percentage */}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {ratioInfo ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-ink text-cream-50 font-mono font-black text-xs shadow-retro-xs shrink-0 tracking-wider">
+                              <span className="text-rust">●</span> {ratioInfo.ratioStr}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rust text-white font-mono font-bold text-[10px] shrink-0">
+                              <RefreshCw className="w-2.5 h-2.5 animate-spin" /> SYNCING
+                            </span>
+                          )}
+                          <span
+                            className="text-xs font-bold text-ink truncate"
+                            title={live?.progressMessage || "Syncing spreadsheets..."}
+                          >
+                            {live?.progressMessage || "Syncing spreadsheets..."}
+                          </span>
+                        </div>
+
+                        <span className="font-mono text-xs font-black text-rust shrink-0">
+                          {live?.progress || 0}%
+                        </span>
                       </div>
-                      <div className="w-full h-2.5 rounded-full bg-slate-900 overflow-hidden">
+
+                      {/* Tactile Retro Progress Bar with Animated Barber-Pole Stripes */}
+                      <div className="w-full h-3.5 border-2 border-ink rounded-full overflow-hidden bg-white p-0.5 relative shadow-inner">
                         <div
-                          className="h-full bg-gradient-to-r from-indigo-500 via-cyan-400 to-emerald-400 transition-all duration-300 rounded-full glow-indigo"
-                          style={{ width: `${live?.progress || 0}%` }}
-                        />
+                          className="h-full bg-rust rounded-full transition-all duration-300 relative overflow-hidden"
+                          style={{ width: `${Math.max(live?.progress || 0, 5)}%` }}
+                        >
+                          <div className="absolute inset-0 bg-[linear-gradient(45deg,rgba(255,255,255,0.3)_25%,transparent_25%,transparent_50%,rgba(255,255,255,0.3)_50%,rgba(255,255,255,0.3)_75%,transparent_75%,transparent)] bg-[length:14px_14px] animate-stripes" />
+                        </div>
+                      </div>
+
+                      {/* Bottom Counter Subtitle: e.g. "Processed: 2 of 62 CHs" */}
+                      <div className="flex items-center justify-between text-[10px] font-mono font-bold text-ink/70">
+                        {ratioInfo ? (
+                          <>
+                            <span>Processed: <strong className="text-ink">{ratioInfo.current} of {ratioInfo.total} CHs</strong></span>
+                            <span>{Math.max(0, ratioInfo.total - ratioInfo.current)} CHs remaining</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>Current Phase: <strong className="text-ink">{live?.progressMessage || "Connecting"}</strong></span>
+                            <span>Please wait...</span>
+                          </>
+                        )}
                       </div>
                     </div>
                   )}
 
                   {/* Metadata & Actions */}
-                  <div className="space-y-3 pt-3 border-t border-slate-800 text-xs">
-                    <div className="flex justify-between text-slate-400 font-medium">
+                  <div className="space-y-3 pt-3 border-t-2 border-dashed border-ink/20 text-xs">
+                    <div className="flex justify-between text-ink/60 font-semibold text-[11px]">
                       <span>Last Execution:</span>
-                      <span className="text-slate-200 font-bold">{formatTimeAgo(job.lastRunAt)}</span>
+                      <span className="text-ink font-bold">{formatTimeAgo(job.lastRunAt)}</span>
                     </div>
 
-                    <div className="flex justify-between text-slate-400 font-medium">
-                      <span>Rows Processed:</span>
-                      <span className="text-emerald-400 font-bold">
+                    <div className="flex justify-between text-ink/60 font-semibold text-[11px]">
+                      <span>Rows Extracted:</span>
+                      <span className="text-emerald-700 font-black">
                         {job.runs?.[0]?.rowsWritten || 0} rows
                       </span>
                     </div>
 
-                    {/* Actions Toolbar */}
-                    <div className="flex flex-col gap-2 pt-2">
-                      <div className="flex items-center gap-2 w-full">
+                    {/* Action Buttons */}
+                    <div className="flex flex-col gap-2 pt-1">
+                      <div className="flex items-center gap-2">
                         {isRunning ? (
                           <button
                             onClick={() => handleStopRun(job)}
                             disabled={isStopping}
-                            className="btn-danger flex-1 !py-2.5 text-xs"
+                            className="btn-retro-dark flex-1 !py-2 text-xs"
                           >
-                            <Square className="w-3.5 h-3.5" /> Stop Sync
+                            <Square className="w-3.5 h-3.5" /> STOP SYNC
                           </button>
                         ) : (
                           <button
                             onClick={() => handleStartRun(job)}
                             disabled={isStarting}
-                            className="btn-primary flex-1 !py-2.5 text-xs"
+                            className="btn-retro-primary flex-1 !py-2 text-xs cursor-pointer"
                           >
                             {isStarting ? (
                               <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                             ) : (
                               <Play className="w-3.5 h-3.5 fill-current" />
                             )}
-                            Sync Now
+                            SYNC NOW
                           </button>
                         )}
 
                         <button
                           onClick={() => openLogModal(job)}
-                          className="px-3 py-2.5 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 hover:bg-indigo-500/20 hover:text-white transition-all text-xs font-bold flex items-center gap-1.5 shrink-0 cursor-pointer"
-                          title="Check Status, Health & Copy Summary"
+                          className="btn-retro-pill !py-2 !px-3 text-xs"
+                          title="View Reports & Health"
                         >
-                          <Activity className="w-3.5 h-3.5 text-indigo-400" />
-                          <span>Check Status</span>
+                          <Activity className="w-3.5 h-3.5 text-rust" />
+                          <span className="hidden sm:inline">REPORT</span>
                         </button>
                       </div>
 
@@ -1098,21 +945,21 @@ export default function Dashboard() {
                             href={`https://docs.google.com/spreadsheets/d/${job.targetSpreadsheetId}`}
                             target="_blank"
                             rel="noreferrer"
-                            className="text-xs font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1.5"
+                            className="text-[11px] font-bold text-rust hover:text-rust-hover flex items-center gap-1 underline underline-offset-2"
                           >
-                            <ExternalLink className="w-3.5 h-3.5" /> Open Google Sheet
+                            <ExternalLink className="w-3 h-3" /> Open Sheet
                           </a>
                         ) : (
-                          <span className="text-[11px] text-slate-500">Sheet not generated yet</span>
+                          <span className="text-[10px] text-ink/40 font-mono">No Sheet Yet</span>
                         )}
 
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1.5">
                           <Link
                             href={`/jobs/${job.id}/edit`}
-                            className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-700 transition-colors"
+                            className="p-1.5 rounded-lg border-2 border-ink hover:bg-cream-100 transition-colors"
                             title="Edit Job"
                           >
-                            <Edit3 className="w-4 h-4" />
+                            <Edit3 className="w-3.5 h-3.5 text-ink" />
                           </Link>
 
                           <button
@@ -1120,10 +967,10 @@ export default function Dashboard() {
                               setSelectedJob(job);
                               setDeleteModalOpen(true);
                             }}
-                            className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-rose-400 border border-slate-700 transition-colors cursor-pointer"
+                            className="p-1.5 rounded-lg border-2 border-ink hover:bg-red-50 text-red-700 transition-colors cursor-pointer"
                             title="Delete Job"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </div>
@@ -1135,10 +982,10 @@ export default function Dashboard() {
           </div>
         ) : (
           /* Table Layout View */
-          <div className="glass-panel-3d rounded-3xl overflow-hidden border border-slate-700/60">
+          <div className="card-retro overflow-hidden bg-white">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
-                <thead className="bg-slate-950/80 text-slate-400 uppercase tracking-wider font-bold border-b border-slate-800">
+                <thead className="bg-cream-100 text-ink uppercase tracking-wider font-black border-b-2 border-ink">
                   <tr>
                     <th className="p-4">Job Name</th>
                     <th className="p-4">Type</th>
@@ -1149,45 +996,49 @@ export default function Dashboard() {
                     <th className="p-4 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/80">
+                <tbody className="divide-y-2 divide-dashed divide-ink/15 font-semibold">
                   {filteredJobs.map((job) => {
                     const status = getDisplayStatus(job);
-                    const isRunning = status === "running";
+                    const live = runProgress.get(job.id);
+                    const isRunning = status === "running" || live?.status === "running" || startingJobs.has(job.id);
+                    const ratioInfo = parseProgressRatio(live?.progressMessage);
 
                     return (
-                      <tr key={job.id} className="hover:bg-slate-800/40 transition-colors font-medium">
-                        <td className="p-4 font-bold text-white text-sm">{job.name}</td>
+                      <tr key={job.id} className="hover:bg-cream-50 transition-colors">
+                        <td className="p-4 font-bold text-ink text-sm">{job.name}</td>
                         <td className="p-4">
-                          <span className={job.type === "diamonds" ? "badge-diamonds" : "badge-prl"}>
+                          <span className={job.type === "diamonds" ? "stamp-diamonds" : "stamp-prl"}>
                             {job.type}
                           </span>
                         </td>
-                        <td className="p-4 font-mono text-slate-300">{job.gameMode || "5v5"}</td>
+                        <td className="p-4 font-mono text-ink/70">{job.gameMode || "5v5"}</td>
                         <td className="p-4">
                           {isRunning ? (
-                            <span className="badge-running">Syncing</span>
+                            <span className="stamp-running">
+                              <RefreshCw className="w-3 h-3 animate-spin text-rust inline mr-1" />
+                              {ratioInfo ? ratioInfo.ratioStr : `${live?.progress || 0}%`}
+                            </span>
                           ) : status === "success" ? (
-                            <span className="badge-success">Ready</span>
+                            <span className="stamp-success">Ready</span>
                           ) : (
-                            <span className="badge-pending">Idle</span>
+                            <span className="btn-retro-pill !py-0.5 !px-2 text-[9px]">Idle</span>
                           )}
                         </td>
-                        <td className="p-4 text-slate-400">{formatTimeAgo(job.lastRunAt)}</td>
-                        <td className="p-4 text-emerald-400 font-bold">{job.runs?.[0]?.rowsWritten || 0}</td>
+                        <td className="p-4 text-ink/60">{formatTimeAgo(job.lastRunAt)}</td>
+                        <td className="p-4 text-emerald-700 font-bold">{job.runs?.[0]?.rowsWritten || 0}</td>
                         <td className="p-4 text-right">
                           <div className="flex items-center justify-end gap-2">
                             <button
                               onClick={() => (isRunning ? handleStopRun(job) : handleStartRun(job))}
-                              className="btn-primary !py-1.5 !px-3 text-xs"
+                              className="btn-retro-primary !py-1 !px-2.5 text-xs"
                             >
                               {isRunning ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3 fill-current" />}
                             </button>
-
                             <button
                               onClick={() => openLogModal(job)}
-                              className="px-3 py-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-bold text-xs hover:bg-indigo-500/20"
+                              className="btn-retro-pill !py-1 !px-2.5 text-xs"
                             >
-                              Check Status
+                              Report
                             </button>
                           </div>
                         </td>
@@ -1199,7 +1050,7 @@ export default function Dashboard() {
             </div>
           </div>
         )}
-      </div>
+      </main>
 
       {/* Delete Confirmation Modal */}
       <Modal
@@ -1209,147 +1060,122 @@ export default function Dashboard() {
         type="danger"
         footer={
           <div className="flex justify-end gap-3 pt-2">
-            <button onClick={() => setDeleteModalOpen(false)} className="btn-ghost">
+            <button onClick={() => setDeleteModalOpen(false)} className="btn-retro-pill">
               Cancel
             </button>
-            <button onClick={handleDeleteJob} className="btn-danger">
+            <button onClick={handleDeleteJob} className="btn-retro-primary !bg-red-700">
               Delete Job
             </button>
           </div>
         }
       >
-        <p className="text-slate-300 text-sm">
-          Are you sure you want to delete this job configuration? This will stop any running synchronizations.
+        <p className="text-ink/80 text-sm">
+          Are you sure you want to delete this job configuration? This will permanently stop any active sync tasks.
         </p>
       </Modal>
 
-      {/* Diagnostics, CH Health & Copy Summary Modal */}
+      {/* Execution Health & Inspection Dossier Modal */}
       <Modal
         isOpen={errorsModalOpen}
         onClose={() => setErrorsModalOpen(false)}
-        title={`Health & Execution Report - ${selectedJob?.name}`}
+        title={`Execution Dossier - ${selectedJob?.name}`}
         maxWidth="max-w-4xl"
       >
         <div className="space-y-6">
-          {/* Modal Tab Navigation Matrix */}
-          <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+          {/* Tab Navigation Matrix */}
+          <div className="flex flex-wrap items-center gap-2 border-b-2 border-dashed border-ink/20 pb-3">
             <button
               onClick={() => setActiveLogTab("overview")}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
                 activeLogTab === "overview"
-                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20"
-                  : "text-slate-400 hover:text-white"
+                  ? "bg-ink text-white shadow-retro-sm"
+                  : "bg-cream-50 text-ink/70 hover:text-ink"
               }`}
             >
-              Overview & Reports
+              OVERVIEW & REPORT
             </button>
 
             <button
               onClick={() => setActiveLogTab("chHealth")}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
                 activeLogTab === "chHealth"
-                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20"
-                  : "text-slate-400 hover:text-white"
+                  ? "bg-ink text-white shadow-retro-sm"
+                  : "bg-cream-50 text-ink/70 hover:text-ink"
               }`}
             >
-              CH Host Health ({viewStats.length})
+              CH HOST HEALTH ({viewStats.length})
             </button>
 
             <button
               onClick={() => setActiveLogTab("duplicates")}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
                 activeLogTab === "duplicates"
-                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
-                  : "text-slate-400 hover:text-white"
+                  ? "bg-rust text-white shadow-retro-sm"
+                  : "bg-cream-50 text-ink/70 hover:text-ink"
               }`}
             >
-              Duplicates ({viewErrors.filter((err) => getErrorType(err) === "duplicate").length})
+              DUPLICATES ({viewErrors.filter((err) => getErrorType(err) === "duplicate").length})
             </button>
 
             <button
               onClick={() => setActiveLogTab("logs")}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
                 activeLogTab === "logs"
-                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20"
-                  : "text-slate-400 hover:text-white"
+                  ? "bg-ink text-white shadow-retro-sm"
+                  : "bg-cream-50 text-ink/70 hover:text-ink"
               }`}
             >
-              System Logs ({viewErrors.length})
+              SYSTEM LOGS ({viewErrors.length})
             </button>
           </div>
 
-          {/* TAB 1: OVERVIEW & COPY SUMMARY */}
+          {/* TAB 1: OVERVIEW */}
           {activeLogTab === "overview" && (
             <div className="space-y-6">
-              {/* Health Banner */}
-              {viewErrors.filter((e) => ["accessibility", "dissolved", "rule_violation"].includes(getErrorType(e))).length > 0 ? (
-                <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-start gap-3 text-rose-300 text-xs leading-relaxed">
-                  <AlertCircle className="w-5 h-5 text-rose-400 mt-0.5 shrink-0" />
-                  <div>
-                    <h4 className="font-extrabold text-rose-400 text-sm uppercase tracking-wider">
-                      Critical Sheet Access Faults or Rule Violations Detected
-                    </h4>
-                    <p className="mt-1">
-                      Some Community Host sheets had missing links (rule violations) or cannot be accessed. Check the CH Host Health tab to locate affected hosts.
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-start gap-3 text-emerald-300 text-xs leading-relaxed">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-400 mt-0.5 shrink-0" />
-                  <div>
-                    <h4 className="font-extrabold text-emerald-400 text-sm uppercase tracking-wider">
-                      All CH Nodes Operating Nominally
-                    </h4>
-                    <p className="mt-1">No critical sheet access permissions, dissolved links, or rule violation errors encountered.</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Action Buttons: Copy Summary & Export CSV */}
-              <div className="flex flex-wrap items-center justify-between gap-4 p-5 rounded-2xl bg-slate-950/80 border border-slate-800">
+              {/* Actions Box */}
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-5 rounded-2xl border-2 border-dashed border-ink/30 bg-cream-50">
                 <div className="space-y-1">
-                  <h4 className="font-black text-white text-sm">Extraction Summary Actions</h4>
-                  <p className="text-xs text-slate-400">
-                    Copy a clean formatted report to share with CH Admins or export a CSV.
+                  <h4 className="font-serif-title font-black text-ink text-base">Summary Actions</h4>
+                  <p className="text-xs text-ink/70 font-medium">
+                    Copy a clean formatted report to share with Community Admins or export to CSV.
                   </p>
                 </div>
 
                 <div className="flex items-center gap-3">
-                  <button onClick={copyTextReport} className="btn-primary !py-2.5 text-xs">
+                  <button onClick={copyTextReport} className="btn-retro-primary !py-2 !px-4 text-xs cursor-pointer">
                     <Copy className="w-4 h-4" />
-                    <span>Copy Summary</span>
+                    <span>COPY SUMMARY</span>
                   </button>
 
                   <button
                     onClick={exportReportToCSV}
-                    className="px-4 py-2.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30 transition-all text-xs flex items-center gap-2 cursor-pointer"
+                    className="btn-retro-dark !py-2 !px-4 text-xs cursor-pointer"
                   >
                     <Download className="w-4 h-4" />
-                    <span>Export CSV</span>
+                    <span>EXPORT CSV</span>
                   </button>
                 </div>
               </div>
 
-              {/* Summary Stats Grid */}
+              {/* Metrics Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 text-center">
-                  <span className="text-xs text-slate-400 font-bold uppercase">Extracted Rows</span>
-                  <div className="text-2xl font-black text-emerald-400 mt-1">
+                <div className="p-4 rounded-xl border-2 border-ink bg-white shadow-retro-sm text-center">
+                  <span className="text-[10px] text-ink/60 font-black uppercase tracking-wider">Extracted Rows</span>
+                  <div className="font-serif-title text-3xl font-black text-emerald-700 mt-1">
                     {selectedJob?.runs?.[0]?.rowsWritten || 0}
                   </div>
                 </div>
 
-                <div className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 text-center">
-                  <span className="text-xs text-slate-400 font-bold uppercase">Critical & Rule Issues</span>
-                  <div className="text-2xl font-black text-rose-400 mt-1">
+                <div className="p-4 rounded-xl border-2 border-ink bg-white shadow-retro-sm text-center">
+                  <span className="text-[10px] text-ink/60 font-black uppercase tracking-wider">Faults & Rule Issues</span>
+                  <div className="font-serif-title text-3xl font-black text-red-700 mt-1">
                     {viewErrors.filter((e) => ["accessibility", "dissolved", "rule_violation"].includes(getErrorType(e))).length}
                   </div>
                 </div>
 
-                <div className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 text-center">
-                  <span className="text-xs text-slate-400 font-bold uppercase">Duplicates Flagged</span>
-                  <div className="text-2xl font-black text-amber-400 mt-1">
+                <div className="p-4 rounded-xl border-2 border-ink bg-white shadow-retro-sm text-center">
+                  <span className="text-[10px] text-ink/60 font-black uppercase tracking-wider">Duplicates Flagged</span>
+                  <div className="font-serif-title text-3xl font-black text-rust mt-1">
                     {viewErrors.filter((e) => getErrorType(e) === "duplicate").length}
                   </div>
                 </div>
@@ -1361,7 +1187,7 @@ export default function Dashboard() {
           {activeLogTab === "chHealth" && (
             <div className="space-y-4 max-h-[380px] overflow-y-auto pr-1">
               <table className="w-full text-left text-xs">
-                <thead className="bg-slate-950 text-slate-400 uppercase tracking-wider font-bold border-b border-slate-800">
+                <thead className="bg-cream-100 text-ink uppercase tracking-wider font-black border-b-2 border-ink">
                   <tr>
                     <th className="p-3">CH Nickname</th>
                     <th className="p-3 text-center">Status</th>
@@ -1369,7 +1195,7 @@ export default function Dashboard() {
                     <th className="p-3">Issue Details</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60">
+                <tbody className="divide-y-2 divide-dashed divide-ink/15 font-semibold">
                   {viewStats.map((stat, i) => {
                     const chErrs = viewErrors.filter((e) => e.chName === stat.chName);
                     const hasRuleViolation = chErrs.some((e) => getErrorType(e) === "rule_violation");
@@ -1377,27 +1203,25 @@ export default function Dashboard() {
                     const hasDup = chErrs.some((e) => getErrorType(e) === "duplicate");
 
                     return (
-                      <tr key={i} className="hover:bg-slate-900/50">
-                        <td className="p-3 font-bold text-white">{stat.chName}</td>
+                      <tr key={i} className="hover:bg-cream-50">
+                        <td className="p-3 font-bold text-ink">{stat.chName}</td>
                         <td className="p-3 text-center">
                           {hasRuleViolation ? (
-                            <span className="px-2.5 py-1 rounded-lg bg-rose-500/20 text-rose-300 font-bold border border-rose-500/30 text-[10px] uppercase">
-                              Rule Fault
-                            </span>
+                            <span className="stamp-failed">Rule Fault</span>
                           ) : hasCritical ? (
-                            <span className="badge-failed">Critical</span>
+                            <span className="stamp-failed">Critical</span>
                           ) : hasDup ? (
-                            <span className="badge-diamonds">Duplicate</span>
+                            <span className="stamp-diamonds">Duplicate</span>
                           ) : (
-                            <span className="badge-success">Normal</span>
+                            <span className="stamp-success">Normal</span>
                           )}
                         </td>
-                        <td className="p-3 text-center font-mono font-bold text-emerald-400">{stat.count}</td>
+                        <td className="p-3 text-center font-mono font-bold text-emerald-700">{stat.count}</td>
                         <td className="p-3">
                           {chErrs.length === 0 ? (
-                            <span className="text-slate-500 italic">None</span>
+                            <span className="text-ink/40 italic">None</span>
                           ) : (
-                            <div className="space-y-1 font-mono text-[11px] text-rose-300">
+                            <div className="space-y-1 font-mono text-[11px] text-red-700">
                               {chErrs.map((e, idx) => (
                                 <div key={idx}>• {e.error}</div>
                               ))}
@@ -1416,9 +1240,9 @@ export default function Dashboard() {
           {activeLogTab === "duplicates" && (
             <div className="space-y-4 max-h-[380px] overflow-y-auto pr-1">
               {viewErrors.filter((err) => getErrorType(err) === "duplicate").length === 0 ? (
-                <div className="text-center py-12 text-slate-500 text-xs">
-                  <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto mb-2 opacity-50" />
-                  No duplicate player entries detected in this run.
+                <div className="text-center py-12 text-ink/50 text-xs">
+                  <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto mb-2 opacity-60" />
+                  No duplicate player entries detected in this execution run.
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1428,9 +1252,9 @@ export default function Dashboard() {
                       const parsed = parseDuplicateError(err);
                       if (!parsed) {
                         return (
-                          <div key={i} className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs">
-                            <div className="font-extrabold text-white mb-1">{err.chName}</div>
-                            <div className="font-mono text-amber-300/90">{err.error}</div>
+                          <div key={i} className="p-4 rounded-xl border-2 border-ink bg-cream-50 text-xs">
+                            <div className="font-black text-ink mb-1">{err.chName}</div>
+                            <div className="font-mono text-rust">{err.error}</div>
                           </div>
                         );
                       }
@@ -1440,48 +1264,42 @@ export default function Dashboard() {
                       return (
                         <div
                           key={i}
-                          className={`p-4 rounded-2xl border text-xs space-y-3 relative overflow-hidden ${
-                            isFake
-                              ? "bg-rose-500/10 border-rose-500/30"
-                              : "bg-amber-500/10 border-amber-500/30"
-                          }`}
+                          className="p-4 rounded-xl border-2 border-ink bg-white shadow-retro-sm text-xs space-y-2.5"
                         >
                           <div className="flex items-center justify-between">
-                            <span className="font-black text-white text-sm">{parsed.name}</span>
+                            <span className="font-black text-ink text-sm">{parsed.name}</span>
                             <span
-                              className={`text-[10px] font-mono font-extrabold px-2 py-0.5 rounded border uppercase ${
+                              className={`text-[9px] font-mono font-black px-2 py-0.5 rounded border ${
                                 isFake
-                                  ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
-                                  : "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                                  ? "bg-red-100 text-red-800 border-red-300"
+                                  : "bg-amber-100 text-amber-800 border-amber-300"
                               }`}
                             >
-                              {isFake ? "DIFFERENT SERVER DUPLICATE" : "MLBB PLAYER"}
+                              {isFake ? "DIFFERENT SERVER" : "DUPLICATE"}
                             </span>
                           </div>
 
-                          <div className="font-mono text-[11px] text-slate-300 space-y-1">
+                          <div className="font-mono text-[11px] text-ink/80 space-y-1">
                             <div>
-                              UID: <strong className="text-white">{parsed.uid}</strong> | Server:{" "}
-                              <strong className="text-white">{parsed.server}</strong>
+                              UID: <strong className="text-ink">{parsed.uid}</strong> | Server:{" "}
+                              <strong className="text-ink">{parsed.server}</strong>
                             </div>
                             {isFake && parsed.prevServer && (
-                              <div className="text-rose-400 font-bold">
-                                Entered Server: {parsed.server} | Original Server: {parsed.prevServer}
+                              <div className="text-red-700 font-bold">
+                                Entered Server: {parsed.server} | Original: {parsed.prevServer}
                               </div>
                             )}
                           </div>
 
-                          <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-[11px]">
+                          <div className="pt-2 border-t-2 border-dashed border-ink/20 flex items-center justify-between text-[11px]">
                             <div>
-                              <span className="text-slate-500 font-bold block text-[9px] uppercase">Original CH</span>
-                              <span className="font-bold text-indigo-400">{parsed.prevCh}</span>
+                              <span className="text-ink/50 font-bold block text-[9px] uppercase">ORIGINAL</span>
+                              <span className="font-bold text-ink">{parsed.prevCh}</span>
                             </div>
-                            <span className="text-slate-500">➡️</span>
+                            <span className="text-ink/40">➡️</span>
                             <div className="text-right">
-                              <span className="text-slate-500 font-bold block text-[9px] uppercase">Duplicate In CH</span>
-                              <span className={`font-bold ${isFake ? "text-rose-400" : "text-amber-400"}`}>
-                                {parsed.currCh}
-                              </span>
+                              <span className="text-ink/50 font-bold block text-[9px] uppercase">DUPLICATE</span>
+                              <span className="font-bold text-rust">{parsed.currCh}</span>
                             </div>
                           </div>
                         </div>
@@ -1497,15 +1315,15 @@ export default function Dashboard() {
             <div className="space-y-4">
               <input
                 type="text"
-                placeholder="Search logs by CH or error message..."
+                placeholder="Search logs by CH or error pattern..."
                 value={modalSearch}
                 onChange={(e) => setModalSearch(e.target.value)}
-                className="input-field !py-2.5 !text-xs"
+                className="input-retro !py-2 !text-xs"
               />
 
               <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
                 {viewErrors.length === 0 ? (
-                  <p className="text-slate-500 italic text-center py-8 text-xs">No execution logs or errors recorded.</p>
+                  <p className="text-ink/50 italic text-center py-8 text-xs">No execution logs or errors recorded.</p>
                 ) : (
                   viewErrors
                     .filter(
@@ -1516,10 +1334,10 @@ export default function Dashboard() {
                     .map((err, i) => (
                       <div
                         key={i}
-                        className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-start gap-3 text-xs"
+                        className="p-3 rounded-xl border-2 border-ink bg-cream-50 flex items-start gap-3 text-xs"
                       >
-                        <span className="font-extrabold text-indigo-400 shrink-0">[{err.chName}]</span>
-                        <span className="font-mono text-slate-300">{err.error}</span>
+                        <span className="font-black text-rust shrink-0">[{err.chName}]</span>
+                        <span className="font-mono text-ink/80">{err.error}</span>
                       </div>
                     ))
                 )}
@@ -1528,6 +1346,8 @@ export default function Dashboard() {
           )}
         </div>
       </Modal>
+
+      <AppFooter />
     </div>
   );
 }

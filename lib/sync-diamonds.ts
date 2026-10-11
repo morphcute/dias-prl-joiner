@@ -1,11 +1,11 @@
 import { prisma } from "@/lib/prisma";
-import { JoinerJob } from "@prisma/client";
+import type { JoinerJob } from "@prisma/client";
 import { google } from "googleapis";
 import { getUserAuth } from "./google";
 import { resolveUrl, ResolveResult } from "./url-resolver";
-import { verifyMlbbId } from "./mlbb";
 import { isFormulaOrError, adjustColumnsBasedOnData, detectReportingSheetColumns, isTeamNameHeader } from "./validations";
-import { withRetry } from "./google-retry";
+import { withRetry, delay } from "./google-retry";
+import { verifyMlbbId } from "./mlbb";
 
 interface ChError {
   chName: string;
@@ -405,10 +405,12 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
   console.log(`[Diamonds] Starting sync for job ${job.id} (${job.name})`);
 
   let lastProgressTime = 0;
+  let lastMessage = "";
   const updateProgress = async (percentage: number, message?: string) => {
     const now = Date.now();
-    if (percentage < 100 && percentage > 0 && now - lastProgressTime < 450) return;
+    if (percentage < 100 && percentage > 0 && now - lastProgressTime < 250 && message === lastMessage) return;
     lastProgressTime = now;
+    lastMessage = message || "";
     try {
       await prisma.joinerRun.update({
         where: { id: runId },
@@ -446,9 +448,14 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
   await updateProgress(2, "Reading reporting sheet...");
 
   // Step 1: Read CH entries from primary reporting sheet
-  const reportingSpreadsheet = await sheets.spreadsheets.get({
-    spreadsheetId: (job as any).spreadsheetId,
-  });
+  const reportingSpreadsheet = await withRetry(
+    () => sheets.spreadsheets.get({
+      spreadsheetId: (job as any).spreadsheetId,
+    }),
+    4,
+    2000,
+    "Primary Reporting Sheet Metadata"
+  );
 
   let reportingTabName: string;
   if ((job as any).reportingSheetGid) {
@@ -473,9 +480,14 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
   // Step 1b: Read CH entries from secondary/trainees reporting sheet if configured
   if ((job as any).secondarySpreadsheetId) {
     try {
-      const secSpreadsheet = await sheets.spreadsheets.get({
-        spreadsheetId: (job as any).secondarySpreadsheetId,
-      });
+      const secSpreadsheet = await withRetry(
+        () => sheets.spreadsheets.get({
+          spreadsheetId: (job as any).secondarySpreadsheetId,
+        }),
+        4,
+        2000,
+        "Secondary Reporting Sheet Metadata"
+      );
 
       let secTabName: string;
       if ((job as any).secondaryReportingSheetGid) {
@@ -571,11 +583,18 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
     }
   }
 
+  // Cache for registered teams counts across identical response sheets
+  const registeredTeamsCountCache = new Map<string, { count: string; source: string }>();
+
   const getRegisteredTeamsCount = async (chEntry: any) => {
     let responseCount: number | null = null;
     let responseError: string | null = null;
 
     if (chEntry?.responseSheetUrl) {
+      if (registeredTeamsCountCache.has(chEntry.responseSheetUrl)) {
+        return registeredTeamsCountCache.get(chEntry.responseSheetUrl)!;
+      }
+
       try {
         const resResult = await resolveUrl(chEntry.responseSheetUrl);
         if (!("error" in resResult)) {
@@ -585,10 +604,10 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
               spreadsheetId: resSpreadsheetId,
               range: "A1:Z100",
             }),
-            2,
-            1000,
+            3,
+            1500,
             `Teams Count (${chEntry?.chName || "CH"})`,
-            15000
+            20000
           );
           const resRows = (resSheet as any)?.data?.values || [];
           if (resRows.length > 0) {
@@ -601,8 +620,10 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
         }
       } catch (e: any) {
         console.log(`Failed to read response sheet for ${chEntry?.chName}:`, e);
-        const msg = e?.message || String(e);
-        if (msg.includes("403") || msg.includes("permission")) {
+        const msg = String(e?.message || e);
+        if (/quota/i.test(msg) || /rate.*limit/i.test(msg)) {
+          responseError = "Quota Cooldown";
+        } else if (msg.includes("403") || msg.includes("permission")) {
           responseError = "Private (Verify Link Sharing)";
         } else if (msg.includes("404") || msg.includes("not found")) {
           responseError = "Sheet Not Found";
@@ -620,17 +641,21 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
       }
     }
 
+    let finalRes = { count: "0", source: "none" };
     if (responseCount !== null) {
-      return { count: String(responseCount), source: "sheet" };
+      finalRes = { count: String(responseCount), source: "sheet" };
+    } else if (fallbackCount !== null) {
+      finalRes = { count: String(fallbackCount), source: "fallback" };
+    } else if (responseError) {
+      finalRes = { count: responseError, source: "error" };
     }
-    if (fallbackCount !== null) {
-      return { count: String(fallbackCount), source: "fallback" };
+
+    if (chEntry?.responseSheetUrl) {
+      registeredTeamsCountCache.set(chEntry.responseSheetUrl, finalRes);
     }
-    if (responseError) {
-      return { count: responseError, source: "error" };
-    }
-    return { count: "0", source: "none" };
+    return finalRes;
   };
+
 
   // Response Sheet Cache Map for fast on-demand team name lookup
   const responseSheetCache = new Map<string, { teamNames: string[]; playerTeamMap: Map<string, string> }>();
@@ -675,6 +700,9 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
       continue;
     }
 
+    // Polite delay pacing between CH reads to stay well within Google API 60 req/min quota
+    await delay(200);
+
     try {
       // 1. Direct fast read of default range A1:Z (no metadata overhead)
       let sheetData = await withRetry(
@@ -682,10 +710,10 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
           spreadsheetId,
           range: "A1:Z",
         }),
-        2,
-        1000,
+        3,
+        2000,
         `Read CH Sheet (${chName})`,
-        15000
+        25000
       );
 
       let rows = sheetData.data.values || [];
@@ -1022,19 +1050,27 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
       }
     } catch (error: any) {
       const msg = error?.message || String(error);
+      const isQuota = /quota/i.test(msg) || /rate.*limit/i.test(msg) || /Read requests per minute/i.test(msg);
       console.log(`[Diamonds Sheet] ❌ CH [${i + 1}/${resolvedEntries.length}] ${chName}: Error reading sheet (${msg})`);
-      const teamsRes = await getRegisteredTeamsCount(resolvedEntries[i]);
+      
       let teamsMessage = "";
-      if (teamsRes.count !== "0" || teamsRes.source === "error") {
-        teamsMessage = `.(Teams in responses sheet: ${teamsRes.count})`;
+      if (!isQuota) {
+        const teamsRes = await getRegisteredTeamsCount(resolvedEntries[i]);
+        if (teamsRes.count !== "0" || teamsRes.source === "error") {
+          teamsMessage = `.(Teams in responses sheet: ${teamsRes.count})`;
+        }
       }
-      if (msg.includes("403") || msg.includes("not found") || msg.includes("permission")) {
+
+      if (isQuota) {
+        errors.push({ chName, error: `Google Sheets API Read Quota reached while reading sheet. Rate limit cooldown applied.` });
+      } else if (msg.includes("403") || msg.includes("not found") || msg.includes("permission")) {
         errors.push({ chName, error: `Sheet is not publicly accessible (403). CH needs to set sharing to 'Anyone with the link'.${teamsMessage}` });
       } else if (msg.includes("404")) {
         errors.push({ chName, error: `Sheet not found (404). The spreadsheet may have been deleted.${teamsMessage}` });
       } else {
         errors.push({ chName, error: `Error reading sheet: ${msg}${teamsMessage}` });
       }
+
       if (!chHeaderAdded) {
         const rowData = [chName, "", "", "", "", "", ""];
         if (job.validationEnabled) {
