@@ -5,7 +5,7 @@ import { syncDiamonds } from "@/lib/sync-diamonds";
 import { syncPrl } from "@/lib/sync-prl";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 900; // 15 minutes for large CH tournaments and MooGold validation
+export const maxDuration = 300; // 5 minutes (Vercel max allowed limit for serverless functions)
 
 export async function POST(
   request: Request,
