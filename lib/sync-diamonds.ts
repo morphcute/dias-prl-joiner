@@ -1,5 +1,4 @@
-import { prisma } from "@/lib/prisma";
-import type { JoinerJob } from "@prisma/client";
+import { prisma, type JoinerJob } from "@/lib/prisma";
 import { google } from "googleapis";
 import { getUserAuth } from "./google";
 import { resolveUrl, ResolveResult } from "./url-resolver";
@@ -1126,7 +1125,7 @@ export async function syncDiamonds(job: JoinerJob, runId: string) {
       );
 
       const pct = 60 + Math.floor(((i + batch.length) / allRows.length) * 25);
-      await updateProgress(pct, `MooGold Verifying: ${Math.min(i + BATCH_SIZE, allRows.length)}/${allRows.length}`);
+      await updateProgress(pct, `Verifying Players: ${Math.min(i + BATCH_SIZE, allRows.length)}/${allRows.length}`);
       await new Promise((r) => setTimeout(r, 150));
     }
   }

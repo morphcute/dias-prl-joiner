@@ -100,6 +100,31 @@ function parseProgressRatio(message?: string | null): {
   return null;
 }
 
+/**
+ * Helper to determine what entity is currently being processed
+ * (e.g. "Players" when verifying 1217 roster entries, "CHs" when reading 62 Community Handlers, "Links" when resolving URLs)
+ */
+function getProgressEntity(message?: string | null, total?: number): { singular: string; plural: string } {
+  const msg = (message || "").toLowerCase();
+  if (msg.includes("moogold") || msg.includes("verif") || msg.includes("player") || msg.includes("id")) {
+    return { singular: "Player", plural: "Players" };
+  }
+  if (msg.includes("row")) {
+    return { singular: "Row", plural: "Rows" };
+  }
+  if (msg.includes("url") || msg.includes("resolv") || msg.includes("link")) {
+    return { singular: "CH Link", plural: "CH Links" };
+  }
+  if (msg.includes("ch") || msg.includes("sheet")) {
+    return { singular: "CH", plural: "CHs" };
+  }
+  // If count is large (> 150), it represents player rows, never Community Handlers
+  if (total && total > 150) {
+    return { singular: "Player", plural: "Players" };
+  }
+  return { singular: "CH", plural: "CHs" };
+}
+
 export default function Dashboard() {
   const [jobs, setJobs] = useState<JoinerJob[]>([]);
   const [loading, setLoading] = useState(true);
@@ -783,6 +808,7 @@ export default function Dashboard() {
               const isSuccess = live?.status === "success" || (!live && status === "success");
               const isRunning = !isFailed && !isSuccess && (status === "running" || live?.status === "running" || isStarting);
               const ratioInfo = parseProgressRatio(live?.progressMessage);
+              const entity = getProgressEntity(live?.progressMessage, ratioInfo?.total);
 
               return (
                 <div
@@ -808,7 +834,7 @@ export default function Dashboard() {
 
                       {isRunning ? (
                         <span className="stamp-running">
-                          <RefreshCw className="w-3 h-3 animate-spin text-rust" /> {ratioInfo ? ratioInfo.ratioStr : "RUNNING"}
+                          <RefreshCw className="w-3 h-3 animate-spin text-rust" /> {ratioInfo ? `${ratioInfo.ratioStr} ${entity.plural}` : "RUNNING"}
                         </span>
                       ) : status === "success" || job.runs?.[0]?.status === "success" ? (
                         <span className="stamp-success">
@@ -834,15 +860,15 @@ export default function Dashboard() {
                     </div>
                   </div>
 
-                  {/* Prominent Progress Loading Bar when Running (with 2/62 Ratio Badge) */}
+                  {/* Prominent Progress Loading Bar when Running (with Ratio Badge & Dynamic Entity Unit) */}
                   {isRunning && (
                     <div className="p-3.5 rounded-xl border-2 border-dashed border-ink/40 bg-cream-50 space-y-2.5 shadow-xs animate-fade-in">
-                      {/* Top indicator: Ratio badge (e.g. "2/62") + Action detail + Percentage */}
+                      {/* Top indicator: Ratio badge (e.g. "2/62 CHs", "372/1217 Players") + Action detail + Percentage */}
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2 min-w-0">
                           {ratioInfo ? (
                             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-ink text-cream-50 font-mono font-black text-xs shadow-retro-xs shrink-0 tracking-wider">
-                              <span className="text-rust">●</span> {ratioInfo.ratioStr}
+                              <span className="text-rust">●</span> {ratioInfo.ratioStr} {entity.plural}
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rust text-white font-mono font-bold text-[10px] shrink-0">
@@ -872,12 +898,12 @@ export default function Dashboard() {
                         </div>
                       </div>
 
-                      {/* Bottom Counter Subtitle: e.g. "Processed: 2 of 62 CHs" */}
+                      {/* Bottom Counter Subtitle: e.g. "Processed: 372 of 1217 Players" */}
                       <div className="flex items-center justify-between text-[10px] font-mono font-bold text-ink/70">
                         {ratioInfo ? (
                           <>
-                            <span>Processed: <strong className="text-ink">{ratioInfo.current} of {ratioInfo.total} CHs</strong></span>
-                            <span>{Math.max(0, ratioInfo.total - ratioInfo.current)} CHs remaining</span>
+                            <span>Processed: <strong className="text-ink">{ratioInfo.current} of {ratioInfo.total} {entity.plural}</strong></span>
+                            <span>{Math.max(0, ratioInfo.total - ratioInfo.current)} {entity.plural} remaining</span>
                           </>
                         ) : (
                           <>
@@ -1002,6 +1028,7 @@ export default function Dashboard() {
                     const live = runProgress.get(job.id);
                     const isRunning = status === "running" || live?.status === "running" || startingJobs.has(job.id);
                     const ratioInfo = parseProgressRatio(live?.progressMessage);
+                    const entity = getProgressEntity(live?.progressMessage, ratioInfo?.total);
 
                     return (
                       <tr key={job.id} className="hover:bg-cream-50 transition-colors">
@@ -1016,7 +1043,7 @@ export default function Dashboard() {
                           {isRunning ? (
                             <span className="stamp-running">
                               <RefreshCw className="w-3 h-3 animate-spin text-rust inline mr-1" />
-                              {ratioInfo ? ratioInfo.ratioStr : `${live?.progress || 0}%`}
+                              {ratioInfo ? `${ratioInfo.ratioStr} ${entity.plural}` : `${live?.progress || 0}%`}
                             </span>
                           ) : status === "success" ? (
                             <span className="stamp-success">Ready</span>
